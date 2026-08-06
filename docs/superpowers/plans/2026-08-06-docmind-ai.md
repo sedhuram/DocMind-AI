@@ -1644,6 +1644,7 @@ def get_vector_store(request: Request) -> VectorStore:
 import time
 
 from fastapi import APIRouter, Depends
+from sqlalchemy import text
 
 from app.core.config import settings
 from app.db.session import SessionLocal
@@ -1669,24 +1670,6 @@ def health(vector_store: VectorStore = Depends(get_vector_store)) -> HealthOut:
 def _check_sqlite() -> bool:
     try:
         db = SessionLocal()
-        db.execute_query = None  # placeholder removed below
-        db.close()
-        return True
-    except Exception:
-        return False
-```
-
-- [ ] **Step 3: Fix the placeholder in `_check_sqlite`**
-
-The line `db.execute_query = None  # placeholder removed below` is a stray artifact — replace the function body with a real check using SQLAlchemy's `text()`:
-
-```python
-from sqlalchemy import text
-
-
-def _check_sqlite() -> bool:
-    try:
-        db = SessionLocal()
         db.execute(text("SELECT 1"))
         db.close()
         return True
@@ -1694,9 +1677,7 @@ def _check_sqlite() -> bool:
         return False
 ```
 
-Update the top of `app/api/health.py` to add `from sqlalchemy import text` alongside the existing imports, and replace the full `_check_sqlite` function with the version above.
-
-- [ ] **Step 4: Write `app/main.py`**
+- [ ] **Step 3: Write `app/main.py`**
 
 ```python
 from contextlib import asynccontextmanager
@@ -1737,7 +1718,7 @@ app = FastAPI(title="DocMind AI", lifespan=lifespan)
 app.include_router(health.router, prefix="/api")
 ```
 
-- [ ] **Step 5: Write the API test fixture**
+- [ ] **Step 4: Write the API test fixture**
 
 `backend/tests/api/conftest.py`:
 ```python
@@ -1759,7 +1740,7 @@ def client(tmp_path, monkeypatch):
 
 `backend/tests/api/__init__.py`: empty file.
 
-- [ ] **Step 6: Write the failing test**
+- [ ] **Step 5: Write the failing test**
 
 `backend/tests/api/test_health.py`:
 ```python
@@ -1775,7 +1756,7 @@ def test_health_returns_ok_status(client):
     assert body["uptime_seconds"] >= 0
 ```
 
-- [ ] **Step 7: Run tests**
+- [ ] **Step 6: Run tests**
 
 ```bash
 cd /Users/sedhuram/Documents/assignment/backend
@@ -1783,7 +1764,7 @@ cd /Users/sedhuram/Documents/assignment/backend
 ```
 Expected: PASS (1 test). Note: `monkeypatch.setattr("app.core.config.settings...")` mutates the shared settings singleton for the test's duration — acceptable here since tests don't run in parallel processes by default, but flag it: if the suite later moves to `pytest-xdist`, this fixture needs a per-test `Settings` instance instead of monkeypatching the singleton.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 cd /Users/sedhuram/Documents/assignment
@@ -1891,7 +1872,6 @@ Expected: FAIL with 404s (router not registered) / `ModuleNotFoundError`.
 - [ ] **Step 3: Write `app/api/documents.py`**
 
 ```python
-import shutil
 from pathlib import Path
 from uuid import uuid4
 
@@ -1956,11 +1936,8 @@ def delete_document(
         )
 
     vector_store.delete_document(document_id)
-    for uploaded_file in Path(settings.uploads_dir).glob(f"{document_id}*"):
+    for uploaded_file in Path(settings.uploads_dir).glob(f"{document_id}_*"):
         uploaded_file.unlink(missing_ok=True)
-    for f in Path(settings.uploads_dir).iterdir():
-        if f.name.startswith(document.id):
-            f.unlink(missing_ok=True)
     db.delete(document)
     db.commit()
 
@@ -1983,25 +1960,11 @@ def get_chunk(
     }
 ```
 
-- [ ] **Step 4: Simplify the duplicate file-deletion loop from Step 3**
-
-The `delete_document` function above has a redundant pair of loops for removing the uploaded file (an editing artifact). Replace both loops with a single one:
-
-```python
-    vector_store.delete_document(document_id)
-    for uploaded_file in Path(settings.uploads_dir).glob(f"{document_id}_*"):
-        uploaded_file.unlink(missing_ok=True)
-    db.delete(document)
-    db.commit()
-```
-
-(This replaces everything between `vector_store.delete_document(document_id)` and `db.delete(document)`.)
-
-- [ ] **Step 5: Register the router in `app/main.py`**
+- [ ] **Step 4: Register the router in `app/main.py`**
 
 Add `from app.api import documents` to the imports, and `app.include_router(documents.router, prefix="/api")` after the existing `app.include_router(health.router, prefix="/api")` line.
 
-- [ ] **Step 6: Run tests to verify pass**
+- [ ] **Step 5: Run tests to verify pass**
 
 ```bash
 cd /Users/sedhuram/Documents/assignment/backend
@@ -2009,7 +1972,7 @@ cd /Users/sedhuram/Documents/assignment/backend
 ```
 Expected: PASS (6 tests).
 
-- [ ] **Step 7: Run the full backend test suite to check for regressions**
+- [ ] **Step 6: Run the full backend test suite to check for regressions**
 
 ```bash
 cd /Users/sedhuram/Documents/assignment/backend
@@ -2017,7 +1980,7 @@ cd /Users/sedhuram/Documents/assignment/backend
 ```
 Expected: all tests from Tasks 1-11 PASS.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 cd /Users/sedhuram/Documents/assignment
@@ -3909,5 +3872,5 @@ git commit -m "fix: resolve issues found in final verification pass"
 ## Self-Review Notes
 
 - **Spec coverage:** Sections 3-9 (architecture, tech stack, data model, ingestion, retrieval/generation, API surface, frontend) map to Tasks 1-19. Section 10 (testing) is covered inline in every backend task's pytest steps plus Task 22's full-suite run. Section 11 (Docker/config) is Tasks 14 and 20. Section 12 (monorepo layout) matches the file paths used throughout. Section 13 (deferred items) is written into Task 21's README instructions rather than built, per the spec's explicit non-goals.
-- **Placeholder scan:** the one intentional exception is Task 10 Step 2/3 and Task 11 Step 3/4, which deliberately introduce then immediately fix a stray artifact — this is a real code-review habit (write, then clean up your own placeholder), not an unresolved TODO; both are fully resolved within the same task before it's considered done.
+- **Placeholder scan:** none found — an earlier draft of Tasks 10 and 11 introduced a stray artifact and a redundant loop and then "fixed" them in a following step; both were rewritten clean on first pass instead, since a reviewer would rightly flag introduce-then-fix as an unnecessary detour.
 - **Type consistency:** `RetrievedChunk`, `RetrievalResult`, `UsageInfo`, `ChatMessageOut`, `DocumentOut`, `Citation`, and the SSE event payload shapes are defined once (Tasks 2, 6, 8, 9) and reused with identical field names through the API and frontend client (Tasks 11, 12, 13, 16) — verified consistent across all task Interfaces blocks.
