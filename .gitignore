@@ -1,0 +1,5 @@
+*.docx
+node_modules/
+.next/
+frontend/lib/api-types.ts.bak
+.DS_Store
