@@ -1,14 +1,16 @@
 import { TabShell } from "@/components/TabShell";
 import { ChatTab } from "@/components/chat/ChatTab";
 import { DocumentsTab } from "@/components/documents/DocumentsTab";
+import { ObservabilityTab } from "@/components/observability/ObservabilityTab";
+import { StatusDot } from "@/components/StatusDot";
 
 export default function Home() {
   return (
     <TabShell
-      statusDot={<span className="h-2 w-2 rounded-full bg-slate-400" />}
+      statusDot={<StatusDot />}
       chat={<ChatTab />}
       documents={<DocumentsTab />}
-      observability={<div className="p-6">Observability tab coming in Task 19</div>}
+      observability={<ObservabilityTab />}
     />
   );
 }
