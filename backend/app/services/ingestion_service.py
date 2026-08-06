@@ -19,7 +19,25 @@ logger = logging.getLogger(__name__)
 def ingest_file(file_path: Path, source_type: str, db: Session, vector_store: VectorStore) -> Document:
     """Parse, chunk, embed, and store one file. Never raises — failures are recorded on the Document row
     so one bad file doesn't abort a batch of others."""
-    file_hash = _hash_file(file_path)
+    try:
+        file_hash = _hash_file(file_path)
+        size_bytes = file_path.stat().st_size
+    except Exception as exc:
+        logger.exception("ingestion_hash_failed", extra={"doc_filename": file_path.name})
+        document = Document(
+            id=str(uuid4()),
+            filename=file_path.name,
+            source_type=source_type,
+            file_hash=f"unreadable:{uuid4()}",
+            status="failed",
+            status_detail=str(exc)[:500],
+            size_bytes=0,
+            created_at=datetime.now(timezone.utc),
+        )
+        db.add(document)
+        db.commit()
+        return document
+
     existing = db.query(Document).filter_by(file_hash=file_hash).first()
     if existing and existing.status == "indexed":
         return existing
@@ -30,7 +48,7 @@ def ingest_file(file_path: Path, source_type: str, db: Session, vector_store: Ve
         source_type=source_type,
         file_hash=file_hash,
         status="processing",
-        size_bytes=file_path.stat().st_size,
+        size_bytes=size_bytes,
         created_at=datetime.now(timezone.utc),
     )
     db.add(document)

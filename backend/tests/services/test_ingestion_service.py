@@ -73,3 +73,15 @@ def test_ingest_unparseable_extension_marks_failed(mock_embed, tmp_path):
 
     assert document.status == "failed"
     assert document.status_detail
+
+
+@patch("app.services.ingestion_service.embed_documents", side_effect=_fake_embeddings)
+def test_ingest_nonexistent_file_records_failure_without_raising(mock_embed, tmp_path):
+    db = _db_session()
+    store = VectorStore(str(tmp_path / "chroma"))
+    missing_file = tmp_path / "does-not-exist.txt"
+
+    document = ingest_file(missing_file, "upload", db, store)
+
+    assert document.status == "failed"
+    assert document.status_detail
