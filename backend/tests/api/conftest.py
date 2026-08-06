@@ -17,10 +17,10 @@ def client(tmp_path, monkeypatch):
     # `app.db.session.engine`/`SessionLocal` are created once at module-import time from
     # whatever `settings.sqlite_path` was at that point (see app/db/session.py). Patching
     # `settings.sqlite_path` above does NOT change the already-constructed engine object,
-    # and `app/main.py` / `app/api/health.py` each did `from app.db.session import
-    # SessionLocal`, which binds their own module-level name directly to that same
-    # sessionmaker instance. So all three references must be repointed at a fresh
-    # tmp_path-backed engine, or the app under test would read/write the real
+    # and `app/main.py` / `app/api/health.py` / `app/api/chat.py` each did `from
+    # app.db.session import SessionLocal`, which binds their own module-level name directly
+    # to that same sessionmaker instance. So all four references must be repointed at a
+    # fresh tmp_path-backed engine, or the app under test would read/write the real
     # backend/data/docmind.db instead of an isolated database.
     test_engine = create_engine(
         f"sqlite:///{tmp_path / 'test.db'}", connect_args={"check_same_thread": False}
@@ -30,6 +30,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(db_session, "SessionLocal", test_session_local)
     monkeypatch.setattr("app.main.SessionLocal", test_session_local)
     monkeypatch.setattr("app.api.health.SessionLocal", test_session_local)
+    monkeypatch.setattr("app.api.chat.SessionLocal", test_session_local)
 
     with TestClient(app) as test_client:
         yield test_client

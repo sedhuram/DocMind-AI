@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
-from app.api import documents, health
+from app.api import chat, documents, health
 from app.core.config import settings
 from app.core.logging import configure_logging
 from app.db.session import SessionLocal, init_db
@@ -35,3 +35,4 @@ def _bootstrap_static_documents(vector_store: VectorStore) -> None:
 app = FastAPI(title="DocMind AI", lifespan=lifespan)
 app.include_router(health.router, prefix="/api")
 app.include_router(documents.router, prefix="/api")
+app.include_router(chat.router, prefix="/api")

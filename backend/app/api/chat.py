@@ -1,0 +1,106 @@
+import json
+import time
+from datetime import datetime, timezone
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
+
+from app.api.deps import get_vector_store
+from app.core.rag.prompt import SYSTEM_INSTRUCTION, build_contents
+from app.core.rag.retrieval import retrieve
+from app.db.session import SessionLocal, get_db
+from app.models.orm import ChatMessage
+from app.models.schemas import ChatMessageOut, ChatRequest
+from app.services.generation_service import UsageInfo, stream_generate
+from app.services.vector_store import VectorStore
+
+router = APIRouter(prefix="/chat", tags=["chat"])
+
+
+@router.post("")
+def chat(
+    payload: ChatRequest,
+    db: Session = Depends(get_db),
+    vector_store: VectorStore = Depends(get_vector_store),
+) -> StreamingResponse:
+    history = db.query(ChatMessage).order_by(ChatMessage.created_at).all()
+
+    user_message = ChatMessage(
+        id=str(uuid4()), role="user", content=payload.message,
+        status="ok", created_at=datetime.now(timezone.utc),
+    )
+    db.add(user_message)
+    db.commit()
+
+    def event_stream():
+        start = time.perf_counter()
+        retrieval = retrieve(payload.message, vector_store)
+        contents = build_contents(payload.message, retrieval, history)
+        usage = UsageInfo()
+        full_text: list[str] = []
+        status = "low_confidence" if retrieval.is_low_confidence else "ok"
+
+        try:
+            for delta in stream_generate(SYSTEM_INSTRUCTION, contents, usage):
+                full_text.append(delta)
+                yield f"event: token\ndata: {json.dumps({'text': delta})}\n\n"
+        except Exception:
+            status = "error"
+            yield f"event: error\ndata: {json.dumps({'message': 'The model is temporarily unavailable. Please try again.'})}\n\n"
+
+        latency_ms = int((time.perf_counter() - start) * 1000)
+        citations = [
+            {
+                "document_id": c.document_id, "filename": c.filename,
+                "chunk_index": c.chunk_index, "page_number": c.page_number,
+                "score": round(c.score, 4),
+            }
+            for c in retrieval.chunks
+        ]
+
+        # A fresh session is required here: the `db` dependency injected above is closed by
+        # FastAPI once this generator is returned to StreamingResponse, not when it finishes.
+        db_local = SessionLocal()
+        assistant_message = ChatMessage(
+            id=str(uuid4()), role="assistant", content="".join(full_text),
+            citations=json.dumps(citations), latency_ms=latency_ms,
+            tokens_in=usage.tokens_in, tokens_out=usage.tokens_out,
+            chunks_retrieved=len(retrieval.chunks), top_score=retrieval.top_score,
+            status=status, created_at=datetime.now(timezone.utc),
+        )
+        db_local.add(assistant_message)
+        db_local.commit()
+        db_local.close()
+
+        done_payload = {
+            "citations": citations, "tokens_in": usage.tokens_in, "tokens_out": usage.tokens_out,
+            "latency_ms": latency_ms, "chunks_retrieved": len(retrieval.chunks),
+            "top_score": round(retrieval.top_score, 4), "status": status,
+        }
+        yield f"event: done\ndata: {json.dumps(done_payload)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@router.get("/history", response_model=list[ChatMessageOut])
+def get_history(db: Session = Depends(get_db)) -> list[dict]:
+    messages = db.query(ChatMessage).order_by(ChatMessage.created_at).all()
+    return [_to_schema(m) for m in messages]
+
+
+@router.delete("/history", status_code=204)
+def clear_history(db: Session = Depends(get_db)) -> None:
+    db.query(ChatMessage).delete()
+    db.commit()
+
+
+def _to_schema(message: ChatMessage) -> dict:
+    return {
+        "id": message.id, "role": message.role, "content": message.content,
+        "citations": json.loads(message.citations) if message.citations else [],
+        "latency_ms": message.latency_ms, "tokens_in": message.tokens_in,
+        "tokens_out": message.tokens_out, "chunks_retrieved": message.chunks_retrieved,
+        "top_score": message.top_score, "status": message.status, "created_at": message.created_at,
+    }
