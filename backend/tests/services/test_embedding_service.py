@@ -25,6 +25,9 @@ def test_embed_documents_normalizes_vectors(mock_client):
     magnitude = sum(v ** 2 for v in vectors[0]) ** 0.5
     assert abs(magnitude - 1.0) < 1e-6
 
+    _, kwargs = mock_client.models.embed_content.call_args
+    assert kwargs["config"].task_type == "RETRIEVAL_DOCUMENT"
+
 
 @patch("app.services.embedding_service._client")
 def test_embed_query_uses_retrieval_query_task_type(mock_client):
@@ -36,3 +39,14 @@ def test_embed_query_uses_retrieval_query_task_type(mock_client):
 
     _, kwargs = mock_client.models.embed_content.call_args
     assert kwargs["config"].task_type == "RETRIEVAL_QUERY"
+
+
+@patch("app.services.embedding_service._client")
+def test_embed_documents_returns_zero_vector_unmodified(mock_client):
+    mock_result = MagicMock()
+    mock_result.embeddings = [_fake_embedding([0.0, 0.0, 0.0])]
+    mock_client.models.embed_content.return_value = mock_result
+
+    vectors = embedding_service.embed_documents(["some text"])
+
+    assert vectors == [[0.0, 0.0, 0.0]]
