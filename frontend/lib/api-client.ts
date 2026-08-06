@@ -88,9 +88,13 @@ export const apiClient = {
   deleteDocument: (id: string) => request<void>(`/api/documents/${id}`, { method: "DELETE" }),
 
   getChunk: (documentId: string, chunkIndex: number) =>
-    request<{ text: string; page_number: number | null; filename: string }>(
-      `/api/documents/${documentId}/chunks/${chunkIndex}`
-    ),
+    request<{
+      document_id: string;
+      filename: string;
+      chunk_index: number;
+      page_number: number | null;
+      text: string;
+    }>(`/api/documents/${documentId}/chunks/${chunkIndex}`),
 
   getHistory: () => request<ChatMessageOut[]>("/api/chat/history"),
 
@@ -116,27 +120,31 @@ export const apiClient = {
     const decoder = new TextDecoder();
     let buffer = "";
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
 
-      const frames = buffer.split("\n\n");
-      buffer = frames.pop() ?? "";
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() ?? "";
 
-      for (const frame of frames) {
-        const lines = frame.split("\n");
-        const eventLine = lines.find((l) => l.startsWith("event: "));
-        const dataLine = lines.find((l) => l.startsWith("data: "));
-        if (!eventLine || !dataLine) continue;
+        for (const frame of frames) {
+          const lines = frame.split("\n");
+          const eventLine = lines.find((l) => l.startsWith("event: "));
+          const dataLine = lines.find((l) => l.startsWith("data: "));
+          if (!eventLine || !dataLine) continue;
 
-        const eventType = eventLine.slice("event: ".length);
-        const data = JSON.parse(dataLine.slice("data: ".length));
+          const eventType = eventLine.slice("event: ".length);
+          const data = JSON.parse(dataLine.slice("data: ".length));
 
-        if (eventType === "token") handlers.onToken(data.text);
-        else if (eventType === "done") handlers.onDone(data);
-        else if (eventType === "error") handlers.onError(data.message);
+          if (eventType === "token") handlers.onToken(data.text);
+          else if (eventType === "done") handlers.onDone(data);
+          else if (eventType === "error") handlers.onError(data.message);
+        }
       }
+    } catch {
+      handlers.onError("Connection lost while streaming the response.");
     }
   },
 };
