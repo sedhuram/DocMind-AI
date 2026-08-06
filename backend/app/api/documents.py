@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 from uuid import uuid4
 
@@ -37,16 +38,35 @@ async def upload_document(
     if len(contents) > max_bytes:
         raise HTTPException(status_code=422, detail=f"File exceeds {settings.max_upload_size_mb}MB limit")
 
-    # Each upload gets its own UUID subdirectory (rather than a "{uuid}_{filename}" prefix)
-    # so that `ingest_file`, which derives `Document.filename` from `file_path.name`, records
-    # the original filename verbatim instead of a UUID-prefixed one, while still avoiding
-    # on-disk collisions between separate uploads that share a filename.
-    upload_dir = Path(settings.uploads_dir) / uuid4().hex
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    dest_path = upload_dir / file.filename
+    # Each upload is first written to a throwaway UUID subdirectory (rather than a
+    # "{uuid}_{filename}" prefix) so that `ingest_file`, which derives `Document.filename`
+    # from `file_path.name`, records the original filename verbatim instead of a
+    # UUID-prefixed one, while still avoiding on-disk collisions between concurrent
+    # uploads that share a filename before we know the eventual `Document.id`.
+    uploads_dir = Path(settings.uploads_dir)
+    temp_dir = uploads_dir / uuid4().hex
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = temp_dir / file.filename
     dest_path.write_bytes(contents)
 
-    return ingest_file(dest_path, "upload", db, vector_store)
+    document = ingest_file(dest_path, "upload", db, vector_store)
+
+    # Move the temp subdirectory to its permanent, unambiguous home keyed by the real
+    # Document.id, so `delete_document` can later remove exactly this document's file
+    # with no filename globbing. `final_dir` can only already exist here if a *previous*
+    # upload already indexed this exact document.id and performed this same rename -
+    # which happens precisely when `ingest_file`'s content-hash dedup (see
+    # `ingestion_service.ingest_file`) returned that pre-existing, already-indexed
+    # `Document` instead of processing this upload's bytes. In that case this upload's
+    # freshly written temp file has nothing new to contribute, so discard it rather than
+    # leaving it orphaned on disk forever.
+    final_dir = uploads_dir / document.id
+    if final_dir.exists():
+        shutil.rmtree(temp_dir, ignore_errors=True)
+    else:
+        temp_dir.rename(final_dir)
+
+    return document
 
 
 @router.delete("/{document_id}", status_code=204)
@@ -66,15 +86,11 @@ def delete_document(
         )
 
     vector_store.delete_document(document_id)
-    # Each upload lives in its own "{uploads_dir}/{uuid}/{original_filename}" subdirectory
-    # (see upload_document above); glob on the stored filename to find and remove it, then
-    # clean up the now-empty subdirectory.
-    for uploaded_file in Path(settings.uploads_dir).glob(f"*/{document.filename}"):
-        uploaded_file.unlink(missing_ok=True)
-        try:
-            uploaded_file.parent.rmdir()
-        except OSError:
-            pass
+    # Each upload lives in its own "{uploads_dir}/{document.id}/{original_filename}"
+    # subdirectory keyed by the document's own permanent id (see upload_document above),
+    # so removal is exact and unambiguous - no filename globbing that could ever match
+    # (and delete) a different document's identically-named file.
+    shutil.rmtree(Path(settings.uploads_dir) / document_id, ignore_errors=True)
     db.delete(document)
     db.commit()
 
