@@ -15,7 +15,7 @@ export function DocumentsTab() {
   const [documents, setDocuments] = useState<DocumentOut[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
+  const [isBusy, setIsBusy] = useState(false);
 
   async function refresh() {
     try {
@@ -32,35 +32,42 @@ export function DocumentsTab() {
   }, []);
 
   async function handleFiles(files: File[]) {
-    if (isUploading || files.length === 0) return;
-    setIsUploading(true);
+    if (isBusy || files.length === 0) return;
+    setIsBusy(true);
     setError(null);
-    for (const file of files) {
-      try {
-        await apiClient.uploadDocument(file);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : `Failed to upload ${file.name}`);
+    try {
+      for (const file of files) {
+        try {
+          await apiClient.uploadDocument(file);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : `Failed to upload ${file.name}`);
+        }
       }
+      await refresh();
+    } finally {
+      setIsBusy(false);
     }
-    await refresh();
-    setIsUploading(false);
   }
 
   async function handleDelete(id: string) {
+    if (isBusy) return;
+    setIsBusy(true);
     try {
       await apiClient.deleteDocument(id);
       setError(null);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setIsBusy(false);
     }
   }
 
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="mx-auto max-w-4xl">
-        <UploadDropzone onFiles={handleFiles} disabled={isUploading} />
-        {isUploading && <p className="mt-2 text-sm text-[var(--foreground)]/60">Uploading…</p>}
+        <UploadDropzone onFiles={handleFiles} disabled={isBusy} />
+        {isBusy && <p className="mt-2 text-sm text-[var(--foreground)]/60">Working…</p>}
         {error && <p className="mt-2 text-sm text-red-500">{error}</p>}
         {loadError && (
           <div className="mt-2 flex items-center justify-between gap-2 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-500">
@@ -118,7 +125,12 @@ export function DocumentsTab() {
                     <td>{(doc.size_bytes / 1024).toFixed(1)} KB</td>
                     <td>
                       {doc.source_type === "upload" ? (
-                        <button onClick={() => handleDelete(doc.id)} aria-label="Delete" className="text-[var(--foreground)]/50 hover:text-red-500">
+                        <button
+                          onClick={() => handleDelete(doc.id)}
+                          disabled={isBusy}
+                          aria-label="Delete"
+                          className="text-[var(--foreground)]/50 hover:text-red-500 disabled:opacity-40 disabled:hover:text-[var(--foreground)]/50"
+                        >
                           <Trash2 size={14} />
                         </button>
                       ) : (
