@@ -1,7 +1,10 @@
+import pytest
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from app.models.orm import Base, Document, ChatMessage
+from app.models.schemas import DocumentOut
 
 
 def _memory_session():
@@ -34,3 +37,59 @@ def test_chat_message_round_trip():
     fetched = db.query(ChatMessage).filter_by(id="msg-1").one()
     assert fetched.content == "hello"
     assert fetched.citations is None
+
+
+def test_document_out_from_orm_round_trip():
+    db = _memory_session()
+    doc = Document(
+        id="doc-2",
+        filename="report.pdf",
+        source_type="upload",
+        file_hash="hash2",
+        status="indexed",
+        status_detail="all good",
+        chunk_count=7,
+        size_bytes=2048,
+    )
+    db.add(doc)
+    db.commit()
+
+    fetched = db.query(Document).filter_by(id="doc-2").one()
+    out = DocumentOut.model_validate(fetched)
+
+    assert out.id == "doc-2"
+    assert out.filename == "report.pdf"
+    assert out.source_type == "upload"
+    assert out.status == "indexed"
+    assert out.status_detail == "all good"
+    assert out.chunk_count == 7
+    assert out.size_bytes == 2048
+    assert out.created_at == fetched.created_at
+    assert out.indexed_at is None
+
+
+def test_document_file_hash_unique_constraint():
+    db = _memory_session()
+    db.add(
+        Document(
+            id="doc-3",
+            filename="a.pdf",
+            source_type="upload",
+            file_hash="dup-hash",
+            status="indexed",
+        )
+    )
+    db.commit()
+
+    db.add(
+        Document(
+            id="doc-4",
+            filename="b.pdf",
+            source_type="upload",
+            file_hash="dup-hash",
+            status="indexed",
+        )
+    )
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
