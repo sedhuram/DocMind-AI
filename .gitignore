@@ -1,4 +1,5 @@
 *.docx
+!backend/tests/core/fixtures/*.docx
 node_modules/
 .next/
 frontend/lib/api-types.ts.bak
