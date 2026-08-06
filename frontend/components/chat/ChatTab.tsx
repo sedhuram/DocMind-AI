@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Send, Trash2 } from "lucide-react";
+import { Send, Trash2, X } from "lucide-react";
 import { apiClient, type Citation } from "@/lib/api-client";
 import { MessageBubble, type DisplayMessage } from "@/components/chat/MessageBubble";
 import { CitationDrawer } from "@/components/chat/CitationDrawer";
@@ -103,9 +103,16 @@ export function ChatTab() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
-        {messages.length === 0 && loadError && (
-          <div className="flex h-full flex-col items-center justify-center text-center">
-            <p className="text-sm font-medium text-red-500">{loadError}</p>
+        {loadError && (
+          <div className="mx-auto mb-4 flex max-w-3xl items-center justify-between gap-2 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-500">
+            <span>{loadError}</span>
+            <button
+              onClick={() => setLoadError(null)}
+              aria-label="Dismiss error"
+              className="shrink-0 text-red-500/70 hover:text-red-500"
+            >
+              <X size={14} />
+            </button>
           </div>
         )}
         {messages.length === 0 && !loadError && (

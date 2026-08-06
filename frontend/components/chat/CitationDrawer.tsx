@@ -10,6 +10,8 @@ export function CitationDrawer({ citation, onClose }: { citation: Citation; onCl
 
   useEffect(() => {
     let cancelled = false;
+    setText(null);
+    setError(null);
     apiClient
       .getChunk(citation.document_id, citation.chunk_index)
       .then((chunk) => {
