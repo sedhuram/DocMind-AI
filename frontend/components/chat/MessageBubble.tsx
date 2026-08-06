@@ -1,9 +1,7 @@
 "use client";
 
-import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Citation } from "@/lib/api-client";
-import { CitationDrawer } from "@/components/chat/CitationDrawer";
 
 export interface DisplayMessage {
   id: string;
@@ -16,8 +14,12 @@ export interface DisplayMessage {
   status: "ok" | "low_confidence" | "error";
 }
 
-export function MessageBubble({ message }: { message: DisplayMessage }) {
-  const [openCitation, setOpenCitation] = useState<Citation | null>(null);
+export interface MessageBubbleProps {
+  message: DisplayMessage;
+  onOpenCitation: (citation: Citation) => void;
+}
+
+export function MessageBubble({ message, onOpenCitation }: MessageBubbleProps) {
   const isUser = message.role === "user";
 
   return (
@@ -40,7 +42,7 @@ export function MessageBubble({ message }: { message: DisplayMessage }) {
             {message.citations.map((citation, i) => (
               <button
                 key={`${citation.document_id}-${citation.chunk_index}`}
-                onClick={() => setOpenCitation(citation)}
+                onClick={() => onOpenCitation(citation)}
                 className="rounded-full border border-[var(--border)] px-2 py-0.5 text-xs hover:bg-[var(--border)]/30"
               >
                 [{i + 1}] {citation.filename}
@@ -55,7 +57,6 @@ export function MessageBubble({ message }: { message: DisplayMessage }) {
           </p>
         )}
       </div>
-      {openCitation && <CitationDrawer citation={openCitation} onClose={() => setOpenCitation(null)} />}
     </div>
   );
 }

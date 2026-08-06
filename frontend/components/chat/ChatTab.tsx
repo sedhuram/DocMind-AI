@@ -2,30 +2,39 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Send, Trash2 } from "lucide-react";
-import { apiClient } from "@/lib/api-client";
+import { apiClient, type Citation } from "@/lib/api-client";
 import { MessageBubble, type DisplayMessage } from "@/components/chat/MessageBubble";
+import { CitationDrawer } from "@/components/chat/CitationDrawer";
 
 export function ChatTab() {
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [openCitation, setOpenCitation] = useState<Citation | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    apiClient.getHistory().then((history) => {
-      setMessages(
-        history.map((m) => ({
-          id: m.id,
-          role: m.role,
-          content: m.content,
-          citations: m.citations,
-          latencyMs: m.latency_ms,
-          tokensIn: m.tokens_in,
-          tokensOut: m.tokens_out,
-          status: m.status,
-        }))
-      );
-    });
+    apiClient
+      .getHistory()
+      .then((history) => {
+        setLoadError(null);
+        setMessages(
+          history.map((m) => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            citations: m.citations,
+            latencyMs: m.latency_ms,
+            tokensIn: m.tokens_in,
+            tokensOut: m.tokens_out,
+            status: m.status,
+          }))
+        );
+      })
+      .catch(() => {
+        setLoadError("Couldn't reach the backend. Is it running?");
+      });
   }, []);
 
   useEffect(() => {
@@ -76,8 +85,13 @@ export function ChatTab() {
   }
 
   async function handleClear() {
-    await apiClient.clearHistory();
-    setMessages([]);
+    try {
+      await apiClient.clearHistory();
+      setMessages([]);
+      setLoadError(null);
+    } catch {
+      setLoadError("Couldn't reach the backend. Is it running?");
+    }
   }
 
   return (
@@ -89,7 +103,12 @@ export function ChatTab() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
-        {messages.length === 0 && (
+        {messages.length === 0 && loadError && (
+          <div className="flex h-full flex-col items-center justify-center text-center">
+            <p className="text-sm font-medium text-red-500">{loadError}</p>
+          </div>
+        )}
+        {messages.length === 0 && !loadError && (
           <div className="flex h-full flex-col items-center justify-center text-center text-[var(--foreground)]/50">
             <p className="text-lg font-medium">No conversation yet</p>
             <p className="text-sm">Ask a question about the documents in your collection to get started.</p>
@@ -97,11 +116,13 @@ export function ChatTab() {
         )}
         <div className="mx-auto flex max-w-3xl flex-col gap-4">
           {messages.map((message) => (
-            <MessageBubble key={message.id} message={message} />
+            <MessageBubble key={message.id} message={message} onOpenCitation={setOpenCitation} />
           ))}
           <div ref={bottomRef} />
         </div>
       </div>
+
+      {openCitation && <CitationDrawer citation={openCitation} onClose={() => setOpenCitation(null)} />}
 
       <div className="border-t border-[var(--border)] p-4">
         <div className="mx-auto flex max-w-3xl gap-2">
