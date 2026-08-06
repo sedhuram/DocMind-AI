@@ -1,0 +1,2 @@
+DocMind AI is a retrieval-augmented generation system.
+It answers questions using only the documents it has indexed.
