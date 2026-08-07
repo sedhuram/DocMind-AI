@@ -14,6 +14,7 @@ export function ChatTab() {
     setActiveSessionId,
     messages,
     isStreaming,
+    streamingSessionIds,
     sendMessage,
     createSession,
     deleteSession,
@@ -121,6 +122,7 @@ export function ChatTab() {
           {sessions.map((session) => {
             const isActive = session.id === activeSessionId;
             const isEditing = session.id === editingSessionId;
+            const isSessionStreaming = streamingSessionIds.has(session.id);
 
             return (
               <div
@@ -152,10 +154,17 @@ export function ChatTab() {
                   <button
                     onClick={() => setActiveSessionId(session.id)}
                     onDoubleClick={() => handleStartRename(session.id, session.title)}
-                    className="flex-1 text-left truncate font-semibold pr-2 select-none"
+                    className="flex-1 flex items-center gap-1.5 text-left truncate font-semibold pr-2 select-none"
                     title="Double-click to rename"
                   >
-                    {session.title}
+                    {isSessionStreaming && (
+                      <Loader2
+                        size={10}
+                        className="shrink-0 animate-spin text-[var(--accent)]"
+                        aria-label="Generating response"
+                      />
+                    )}
+                    <span className="truncate">{session.title}</span>
                   </button>
                 )}
 

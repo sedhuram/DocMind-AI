@@ -24,6 +24,7 @@ export interface ChatContextType {
   messages: DisplayMessage[];
   setMessages: React.Dispatch<React.SetStateAction<DisplayMessage[]>>;
   isStreaming: boolean;
+  streamingSessionIds: Set<string>;
   sendMessage: (text: string) => Promise<void>;
   createSession: (title?: string) => Promise<string>;
   deleteSession: (id: string) => Promise<void>;
@@ -71,6 +72,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [activeSessionId, setActiveSessionId] = useState<string>("default");
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [streamingSessionIds, setStreamingSessionIds] = useState<Set<string>>(new Set());
   const [notes, setNotes] = useState<Note[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
@@ -88,6 +90,16 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   // Background sessions streaming storage
   const sessionMessagesRef = useRef<Map<string, DisplayMessage[]>>(new Map());
   const activeStreamsRef = useRef<Set<string>>(new Set());
+
+  const markSessionStreaming = (sessionId: string) => {
+    activeStreamsRef.current.add(sessionId);
+    setStreamingSessionIds(new Set(activeStreamsRef.current));
+  };
+
+  const unmarkSessionStreaming = (sessionId: string) => {
+    activeStreamsRef.current.delete(sessionId);
+    setStreamingSessionIds(new Set(activeStreamsRef.current));
+  };
 
   // Sync activeSessionId with background streaming status
   const currentActiveSessionRef = useRef<string>(activeSessionId);
@@ -213,7 +225,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   // Resubmit Stream (used after editing message)
   const resubmitStream = async (text: string) => {
     const targetSessionId = activeSessionId;
-    activeStreamsRef.current.add(targetSessionId);
+    markSessionStreaming(targetSessionId);
     if (currentActiveSessionRef.current === targetSessionId) {
       setIsStreaming(true);
     }
@@ -260,7 +272,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             : m
         );
         sessionMessagesRef.current.set(targetSessionId, nextMsgs);
-        activeStreamsRef.current.delete(targetSessionId);
+        unmarkSessionStreaming(targetSessionId);
 
         if (currentActiveSessionRef.current === targetSessionId) {
           setMessages([...nextMsgs]);
@@ -274,7 +286,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         const msgs = sessionMessagesRef.current.get(targetSessionId) || [];
         const nextMsgs = msgs.map((m) => (m.id === assistantId ? { ...m, content: message, status: "error" as const } : m));
         sessionMessagesRef.current.set(targetSessionId, nextMsgs);
-        activeStreamsRef.current.delete(targetSessionId);
+        unmarkSessionStreaming(targetSessionId);
 
         if (currentActiveSessionRef.current === targetSessionId) {
           setMessages([...nextMsgs]);
@@ -335,7 +347,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     if (!text.trim()) return;
 
     const targetSessionId = activeSessionId;
-    activeStreamsRef.current.add(targetSessionId);
+    markSessionStreaming(targetSessionId);
     if (currentActiveSessionRef.current === targetSessionId) {
       setIsStreaming(true);
     }
@@ -387,7 +399,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             : m
         );
         sessionMessagesRef.current.set(targetSessionId, nextMsgs);
-        activeStreamsRef.current.delete(targetSessionId);
+        unmarkSessionStreaming(targetSessionId);
 
         if (currentActiveSessionRef.current === targetSessionId) {
           setMessages([...nextMsgs]);
@@ -408,7 +420,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         const msgs = sessionMessagesRef.current.get(targetSessionId) || [];
         const nextMsgs = msgs.map((m) => (m.id === assistantId ? { ...m, content: message, status: "error" as const } : m));
         sessionMessagesRef.current.set(targetSessionId, nextMsgs);
-        activeStreamsRef.current.delete(targetSessionId);
+        unmarkSessionStreaming(targetSessionId);
 
         if (currentActiveSessionRef.current === targetSessionId) {
           setMessages([...nextMsgs]);
@@ -482,6 +494,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         messages,
         setMessages,
         isStreaming,
+        streamingSessionIds,
         sendMessage,
         createSession,
         deleteSession,

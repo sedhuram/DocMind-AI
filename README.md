@@ -20,6 +20,8 @@ docker compose up --build
 
 **If you're using Ollama, read this before setting `OLLAMA_BASE_URL`.** Running the backend directly on your machine, Ollama is at `http://localhost:11434`. Under `docker compose up` that value is *wrong*: `localhost` inside the backend container resolves to the container, not to your machine, so a host-installed Ollama is unreachable at that address. Compose therefore defaults `OLLAMA_BASE_URL` to `http://host.docker.internal:11434` (with an `extra_hosts: host.docker.internal:host-gateway` mapping so the name also resolves on Linux hosts). `.env.example` ships the `OLLAMA_BASE_URL` line commented out for exactly this reason — leave it commented for the Docker case, and only uncomment it (to the direct-run value or something else) if you're running the backend outside Docker. There's a second, separate gotcha even with the host reachable by name: Ollama binds `127.0.0.1` only by default, which refuses connections arriving over Docker's bridge network regardless of what hostname resolves to it — if you're on the Docker path, start Ollama with `OLLAMA_HOST=0.0.0.0 ollama serve` on the host first. Honest caveat: the Docker→host-Ollama path (both of the above) is a careful static trace, not a verified run — Docker isn't installed in the environment this was built in (see the provenance note below). The Ollama provider itself *was* verified for real, against a locally-run backend and a live `qwen3.6:35b`.
 
+**Docker build status, update:** the two Dockerfiles and `docker-compose.yml` below have since been build-verified for real — `docker compose up --build` produces a healthy backend and a responding frontend, confirmed via the backend's own healthcheck and a live `curl` against both `/api/health` and `:3000`. That verification pass also caught a real bug: `openpyxl` (used by the CSV/XLSX parser added later) was missing from `backend/requirements.txt` — it only worked outside Docker because a local dev virtualenv happened to have it installed already from an earlier `pip install`. Fixed by pinning it in `requirements.txt`. The "static trace, not a verified run" caveat below, and the "Docker itself: not build-verified" line further down, describe the state before this pass and are kept for narrative accuracy but no longer reflect current status.
+
 **Upgrading an existing checkout?** This version added a `provider` column to `chat_messages`, and there's no migration framework (see "No Alembic migrations" below). An older database will hard-fail on the first history read with `no such column: chat_messages.provider`. Delete it first: `rm backend/data/docmind.db` for local dev, or `docker compose down -v` for Docker (the `-v` matters — it's a *named* volume, so a plain `down`/`--build` leaves it in place). Fresh clones are unaffected.
 
 - Backend: `http://localhost:8000` (docs at `/docs`)
@@ -77,7 +79,7 @@ I want to be specific about this because "I tested it" means different things de
 - **One real, live end-to-end run** against the actual Gemini API, not a mock: asked "What file types does DocMind AI support?" against the two seed documents, got back a real streamed answer — *"DocMind AI supports PDF, TXT, Markdown, and DOCX files [Source 1]"* — with a citation to `docmind-faq.md` at similarity score 0.7376 and a 2.9s round trip. That's the proof the retrieval → prompt → generation → citation pipeline actually works together, not just in isolation.
 - **One real, live end-to-end run against a local Ollama instance** (`qwen3.6:35b`), and a real switch back to Gemini in the same session — full detail, real numbers, and the actual citation in "RAG decisions → Ollama as a second generation provider" below.
 - **Both dev servers** (`uvicorn` and `next dev`) booted and served real pages, confirmed by curl and by reading the actual response bodies, not by assuming a command exited 0.
-- **Docker itself: not build-verified**, for the reason above. This is the one place I'm asking you to trust careful reasoning over a green checkmark.
+- **Docker: now build-verified.** `docker compose up --build` produces a healthy backend (its own healthcheck passes) and a responding frontend, confirmed via `curl` against `/api/health` and `:3000` on the actual containers, not just static trace. That pass caught one real bug — `openpyxl` missing from `backend/requirements.txt` (see the update note near the top of this README) — now fixed.
 
 ## RAG decisions
 
@@ -165,7 +167,7 @@ That `DetachedInstanceError` is worth a specific mention because it's the best e
 - No frontend test suite. I said this plainly rather than padding coverage with shallow snapshot tests that verify nothing. If I had another day, this is the first thing I'd add — React Testing Library on the three tab components, focused on the state machines (streaming, upload-busy-guard, citation-drawer-reset) rather than markup snapshots.
 - No auth. Single-user local tool; building a login system for an assignment that explicitly asks for a "simple interface" would be effort spent on the wrong thing.
 - No CI pipeline (GitHub Actions, etc.). The test suite exists and passes locally; wiring it into CI is mechanical and I'd rather spend the time budget on the parts of this that required actual judgment.
-- Docker build itself is unverified in this repo's current state, for the environment reason explained above — flagged loudly rather than claimed.
+- ~~Docker build itself is unverified~~ — now build-verified, see the update note near the top of this README.
 
 ## Productionizing this
 
@@ -224,4 +226,4 @@ In roughly the order I'd tackle them:
 
 ## Screenshots
 
-Not included in this submission draft — I'd add these (Chat tab mid-stream with citation badges, the citation drawer open, Documents tab with mixed static/uploaded sources, Observability tab showing real request metadata, dark mode) as the last step before actually submitting, once Docker is confirmed running on a machine that has it.
+Not included in this submission draft — I'd add these (Chat tab mid-stream with citation badges, the citation drawer open, Documents tab with mixed static/uploaded sources, Observability tab showing real request metadata, dark mode) as the last step before actually submitting.

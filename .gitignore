@@ -1,7 +1,12 @@
 *.docx
 !backend/tests/core/fixtures/*.docx
+assignment_instructions.md
 node_modules/
 .next/
 frontend/lib/api-types.ts.bak
 .DS_Store
 .env
+.agents/
+.superpowers/
+.run/
+*.dev-server.log

@@ -11,23 +11,7 @@ import { ProviderSwitcher } from "@/components/ProviderSwitcher";
 import { LandingPage } from "@/components/landing/LandingPage";
 
 export default function Home() {
-  const [mounted, setMounted] = useState(false);
   const [view, setView] = useState<"landing" | "workspace">("landing");
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  if (!mounted) {
-    return (
-      <div className="h-screen w-screen flex items-center justify-center bg-[var(--background)] text-[var(--foreground)]">
-        <div className="flex flex-col items-center gap-3">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-[var(--accent)] border-t-transparent" />
-          <span className="text-xs font-bold font-mono text-[var(--foreground)]/70">Loading DocMind AI...</span>
-        </div>
-      </div>
-    );
-  }
 
   if (view === "landing") {
     return <LandingPage onLaunch={() => setView("workspace")} />;
