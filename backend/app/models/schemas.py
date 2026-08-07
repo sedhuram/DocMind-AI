@@ -61,6 +61,7 @@ class ObservabilityRow(BaseModel):
     chunks_retrieved: int | None = None
     top_score: float | None = None
     status: str
+    provider: str | None = None
     created_at: datetime
 
 

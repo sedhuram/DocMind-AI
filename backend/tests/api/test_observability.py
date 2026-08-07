@@ -26,6 +26,7 @@ def test_observability_lists_recent_assistant_turns(mock_retrieve, mock_stream, 
     assert rows[0]["query"] == "question one"
     assert rows[0]["tokens_in"] == 5
     assert rows[0]["status"] == "ok"
+    assert rows[0]["provider"] == "gemini"
 
 
 def test_observability_empty_when_no_requests_made(client):

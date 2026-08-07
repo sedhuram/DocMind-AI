@@ -37,6 +37,7 @@ def list_requests(
             "chunks_retrieved": assistant_msg.chunks_retrieved,
             "top_score": assistant_msg.top_score,
             "status": assistant_msg.status,
+            "provider": assistant_msg.provider,
             "created_at": assistant_msg.created_at,
         })
     return rows
