@@ -9,7 +9,7 @@ from app.api.deps import get_vector_store
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.orm import Document
-from app.models.schemas import DocumentOut
+from app.models.schemas import ChunkOut, DocumentOut
 from app.services.ingestion_service import ingest_file
 from app.services.vector_store import VectorStore
 
@@ -29,7 +29,17 @@ async def upload_document(
     db: Session = Depends(get_db),
     vector_store: VectorStore = Depends(get_vector_store),
 ) -> Document:
-    suffix = Path(file.filename).suffix.lower()
+    # `file.filename` comes straight from the client's Content-Disposition header and is
+    # NOT sanitized by Starlette: a value like "../../../data/static/pwned.md" would
+    # otherwise escape `uploads_dir` when joined onto the destination path below.
+    # `Path(...).name` strips every directory component (including `..`), and the
+    # emptiness check also turns a missing filename into a clean 422 instead of the
+    # `TypeError` that `Path(None)` used to raise.
+    safe_name = Path(file.filename or "").name
+    if not safe_name:
+        raise HTTPException(status_code=422, detail="Missing filename")
+
+    suffix = Path(safe_name).suffix.lower()
     if suffix not in _ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=422, detail=f"Unsupported file type: {suffix}")
 
@@ -46,7 +56,7 @@ async def upload_document(
     uploads_dir = Path(settings.uploads_dir)
     temp_dir = uploads_dir / uuid4().hex
     temp_dir.mkdir(parents=True, exist_ok=True)
-    dest_path = temp_dir / file.filename
+    dest_path = temp_dir / safe_name
     dest_path.write_bytes(contents)
 
     document = ingest_file(dest_path, "upload", db, vector_store)
@@ -95,7 +105,7 @@ def delete_document(
     db.commit()
 
 
-@router.get("/{document_id}/chunks/{chunk_index}")
+@router.get("/{document_id}/chunks/{chunk_index}", response_model=ChunkOut)
 def get_chunk(
     document_id: str,
     chunk_index: int,

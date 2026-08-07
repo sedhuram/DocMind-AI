@@ -36,6 +36,42 @@ def test_upload_rejects_unsupported_extension(client):
 
 
 @patch("app.services.ingestion_service.embed_documents", side_effect=_fake_embeddings)
+def test_upload_rejects_path_traversal_filename(mock_embed, client):
+    # `file.filename` is attacker-controlled and Starlette does not sanitize it, so a
+    # traversal payload must be reduced to its basename before it is ever joined onto
+    # the uploads directory - otherwise this endpoint is an unauthenticated
+    # arbitrary-file-write into e.g. data/static/.
+    uploads_dir = Path(settings.uploads_dir)
+    response = client.post(
+        "/api/documents/upload",
+        files={"file": ("../../evil.txt", io.BytesIO(b"traversal payload"), "text/plain")},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["filename"] == "evil.txt"
+
+    written_file = uploads_dir / body["id"] / "evil.txt"
+    assert written_file.exists()
+
+    # Nothing may exist outside uploads_dir: the traversal target would have been
+    # uploads_dir.parent.parent / "evil.txt".
+    escaped_paths = list(uploads_dir.parent.rglob("evil.txt"))
+    assert [p for p in escaped_paths if not p.is_relative_to(uploads_dir)] == []
+
+
+def test_upload_without_filename_returns_422(client):
+    # A missing filename previously reached `Path(None)` and raised an unhandled
+    # TypeError (500) instead of a clean validation error.
+    response = client.post(
+        "/api/documents/upload",
+        files={"file": ("", io.BytesIO(b"no name"), "text/plain")},
+    )
+
+    assert response.status_code == 422
+
+
+@patch("app.services.ingestion_service.embed_documents", side_effect=_fake_embeddings)
 def test_list_documents_returns_uploaded_files(mock_embed, client):
     client.post("/api/documents/upload", files={"file": ("a.txt", io.BytesIO(b"content a"), "text/plain")})
 
