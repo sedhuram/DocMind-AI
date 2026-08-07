@@ -11,6 +11,10 @@ git clone <this-repo>
 cd docmind-ai
 cp .env.example .env
 # edit .env, set GEMINI_API_KEY to a real key from https://aistudio.google.com/apikey
+# optional: DEFAULT_LLM_PROVIDER (gemini|ollama, defaults to gemini), OLLAMA_BASE_URL
+# (defaults to http://localhost:11434), OLLAMA_MODEL (defaults to qwen3.6:35b) — only
+# needed if you want to boot with Ollama pre-selected or point at a non-default install;
+# the provider is also switchable at runtime from the UI without touching .env at all
 docker compose up --build
 ```
 
@@ -57,6 +61,8 @@ On first boot, the backend scans `backend/data/static/` and indexes whatever's t
                           └────────────────────────┘
 ```
 
+Not shown above to keep the box art readable: generation calls can route to a local Ollama instance (`qwen3.6:35b` by default) instead of the Gemini API box, selected at runtime via `PATCH /api/settings` rather than fixed at boot — see "RAG decisions → Ollama as a second generation provider" below. Embeddings always go through Gemini regardless of which provider is active for generation.
+
 Two containers, no auth, single conversation thread, single document collection. That's not a minimal-viable-cop-out — it's a deliberate read of the brief. More on that in "What I deliberately didn't build."
 
 ## What I actually verified
@@ -65,6 +71,7 @@ I want to be specific about this because "I tested it" means different things de
 
 - **65 backend pytest tests**, all passing, covering chunking boundaries, PDF/DOCX/TXT/MD parsing (with real generated fixture files, not mocked text), embedding normalization, vector store cosine-similarity math, ingestion dedup, retrieval context-budget truncation, prompt assembly, generation retry/backoff logic, upload filename sanitization, citation payload round-tripping through the JSON column, and every API route with a mocked Gemini client (so the suite runs with zero network access and zero API key requirement).
 - **One real, live end-to-end run** against the actual Gemini API, not a mock: asked "What file types does DocMind AI support?" against the two seed documents, got back a real streamed answer — *"DocMind AI supports PDF, TXT, Markdown, and DOCX files [Source 1]"* — with a citation to `docmind-faq.md` at similarity score 0.7376 and a 2.9s round trip. That's the proof the retrieval → prompt → generation → citation pipeline actually works together, not just in isolation.
+- **One real, live end-to-end run against a local Ollama instance** (`qwen3.6:35b`), and a real switch back to Gemini in the same session — full detail, real numbers, and the actual citation in "RAG decisions → Ollama as a second generation provider" below.
 - **Both dev servers** (`uvicorn` and `next dev`) booted and served real pages, confirmed by curl and by reading the actual response bodies, not by assuming a command exited 0.
 - **Docker itself: not build-verified**, for the reason above. This is the one place I'm asking you to trust careful reasoning over a green checkmark.
 
@@ -85,6 +92,22 @@ One catch that would have silently broken retrieval if I'd missed it: `gemini-em
 ### Generation: `gemini-3.6-flash`, streamed
 
 Same story — the original spec said `gemini-2.5-flash`, and by the time I was building this, `gemini-3.6-flash` had shipped (July 2026, GA). Flash over Pro because this is a retrieval-grounded task, not an open-ended reasoning task — the model's job is to synthesize an answer from provided context and cite it, not to derive novel insight. That's squarely in Flash's wheelhouse and Pro would just be slower and more expensive for no accuracy gain I'd notice in this use case.
+
+### Ollama as a second generation provider, switchable at runtime
+
+Everything else in this project is configured through `.env` and fixed for the life of the process — that's a deliberate pattern (see "No Alembic migrations," "Single conversation thread" elsewhere in this README: fewer moving parts, less to get wrong). Runtime provider switching is the one place I broke that pattern on purpose, and it's worth explaining why.
+
+The case for Ollama isn't "more options are always better" — it's three specific, real trade-offs against Gemini: it runs entirely on the machine it's installed on, with no network dependency once the model is pulled; it costs nothing per token, because no API call leaves the box; and the document content and the question never leave the machine, which matters if this were ever pointed at anything sensitive. The real cost, which I'm not going to paper over: `qwen3.6:35b` is slow. My live verification run (below) took 20.7 seconds for a 336-token answer on local hardware; the equivalent Gemini call for a comparable question took 2.9 seconds. That's the actual trade-off — privacy and zero marginal cost, in exchange for roughly 7x the latency on this hardware. Anyone picking Ollama needs to know that going in, not discover it mid-demo.
+
+Because that trade-off is real and situational rather than "Ollama is strictly better," the choice belongs at request time, not baked into a fixed deployment. That's why `PATCH /api/settings` exists as the one runtime-mutable piece of config in an otherwise env-var-only project — the extra surface area (a settings endpoint, an in-memory `app.state.active_llm_provider`, a frontend switcher) is worth it specifically because the two providers genuinely trade off against each other rather than one obsoleting the other. This is the same reasoning AnythingLLM uses for its own provider switcher, which is where I drew the pattern from directly rather than reinventing it.
+
+The switch is connectivity-checked before it's accepted, also mirroring AnythingLLM's liveness-check pattern: `PATCH /api/settings` probes `GET {OLLAMA_BASE_URL}/api/tags` with a 2-second timeout before flipping `active_llm_provider`, and rejects the switch with a 400 if the target isn't actually reachable — so "switched to Ollama" always means Ollama was actually there when you switched, not "I set a string and we'll find out on the next chat message." One honest gap this exposed during Task 9 verification: the `reachable` field for the *other*, non-target provider in a `PATCH` response isn't re-probed on that call (skipped deliberately, to avoid paying Ollama's network round-trip on a request that's switching to Gemini), so it can read stale for a few seconds after a switch. `GET /api/settings` always re-probes both and is correct; only the non-target field in a `PATCH` response can lag. Worth knowing if a client trusts that field directly instead of re-fetching.
+
+Embeddings deliberately do *not* have an Ollama option, even though Ollama can serve embedding models too. This isn't an oversight — it's the same dimension-compatibility reasoning as the embedding model choice above: every vector already in Chroma is a 768-dim `gemini-embedding-001` vector, and cosine similarity between vectors from two different embedding models — different dimensions, different semantic space — is meaningless. You'd either have to re-embed the entire store on every switch or silently corrupt retrieval. Generation is stateless per request, so switching it costs nothing; embeddings are load-bearing state, so switching them would be a migration, not a toggle. The design spec calls this out explicitly as a non-goal, and I held it throughout.
+
+Provider selection lives in `app.state.active_llm_provider` — an in-memory variable, not a database row or a `.env` value — and resets to `DEFAULT_LLM_PROVIDER` on every backend restart. That's a documented trade-off, not something I forgot to wire up: persisting it would mean either a settings table (more schema, more migration surface, for a project that already deliberately skips Alembic) or writing back to `.env` at runtime (fragile, and wrong for a containerized deployment where `.env` is often read-only). For a single-process local tool, "restart returns you to the configured default" is honest and cheap. A multi-user or multi-replica deployment would need this in a real store — I'd add it the same day auth got added, for the same reason: both are "this now has per-user state" problems.
+
+**What I actually verified, for real:** with the backend running against my live local Ollama instance (`qwen3.6:35b` at `http://localhost:11434`), I `PATCH`ed the provider to `ollama` and got back `"active_llm_provider": "ollama"` with both providers reported reachable. I then asked "What embedding model does DocMind AI use?" through the real `/api/chat` endpoint. The model answered, streamed token-by-token over 20.7 seconds: *"DocMind AI uses the `gemini-embedding-001` model via Google's Gemini API for generating embeddings [Source 1]."* — grounded in the actual seed doc, with a real citation to `docmind-overview.md` at similarity score 0.7624, `"provider": "ollama"` in the `done` frame, tokens_in 835 / tokens_out 336. That turn showed up with `"provider": "ollama"` in both `/api/chat/history` and `/api/observability/requests`. I then switched back to `gemini` and asked a different question ("What vector database does DocMind AI use?") through the same endpoint — got a real Gemini answer (*"DocMind AI uses ChromaDB (in persistent file mode)... [Source 3]"*) in 2.9 seconds with `"provider": "gemini"`, confirming the switch is genuinely bidirectional, not a one-way migration. Same caliber of proof as the Gemini-only end-to-end run described above — a real model, a real question, a real citation, not a mock.
 
 ### Vector store: ChromaDB, persistent local mode, cosine space
 
