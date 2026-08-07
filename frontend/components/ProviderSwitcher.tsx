@@ -21,7 +21,17 @@ export function ProviderSwitcher() {
     setIsSwitching(true);
     try {
       const updated = await apiClient.updateSettings(providerId);
-      setSettingsState(updated);
+      // The PATCH response only freshly probes the switch target's reachability;
+      // the other provider's `reachable` field is a hardcoded false. Follow up
+      // with a GET so both providers' reachability reflects reality, not just
+      // the one we happened to switch to.
+      try {
+        const fresh = await apiClient.getSettings();
+        setSettingsState(fresh);
+      } catch {
+        // Fall back to the PATCH response rather than leaving stale/no state.
+        setSettingsState(updated);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't switch provider.");
     } finally {
