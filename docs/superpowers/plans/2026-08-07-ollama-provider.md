@@ -1001,12 +1001,33 @@ git commit -m "frontend: provider switcher in header, wired to /api/settings"
 ## Task 8: Provider visibility in Chat and Observability
 
 **Files:**
+- Modify: `backend/app/models/schemas.py`
+- Modify: `backend/app/api/observability.py`
+- Modify: `backend/tests/api/test_observability.py`
 - Modify: `frontend/components/chat/MessageBubble.tsx`
 - Modify: `frontend/components/chat/ChatTab.tsx`
 - Modify: `frontend/components/observability/ObservabilityTab.tsx`
 
 **Interfaces:**
-- Consumes: `provider` field on `ChatMessageOut`/`ChatDoneEvent`/`ObservabilityRow` (Task 6).
+- Consumes: `provider` field on `ChatMessageOut`/`ChatDoneEvent`/`ObservabilityRow` (Task 6, frontend types).
+- Produces: `ObservabilityRow.provider: str | None` (backend Pydantic schema — this did NOT get a `provider` field when Task 2 added the column, since `ObservabilityRow` as a schema was added later, in a prior unrelated review-fix round; this task closes that gap).
+
+**IMPORTANT — this task starts with a backend fix, not frontend work.** Without Step 0, the frontend's "Provider" column added in Step 3 would compile fine but always render `"-"` — the backend literally never sends the field. Read `backend/app/api/observability.py` and `backend/app/models/schemas.py`'s `ObservabilityRow` class in full before starting; neither currently has any `provider` field.
+
+- [ ] **Step 0: Add `provider` to the backend's `ObservabilityRow` schema and route**
+
+In `backend/app/models/schemas.py`, add `provider: str | None = None` to the `ObservabilityRow` class (after `status`, before `created_at`, matching the field order convention already used in `ChatMessageOut`).
+
+In `backend/app/api/observability.py`, add `"provider": assistant_msg.provider,` to the dict appended in `list_requests`'s loop (alongside the existing `"status": assistant_msg.status,` line).
+
+Add a test to `backend/tests/api/test_observability.py` asserting a chat turn generated with a specific provider shows that provider in the observability response — extend the existing `test_observability_lists_recent_assistant_turns` test (which already mocks `retrieve`/`stream_generate` and posts a chat message) with an assertion like `assert rows[0]["provider"] == "gemini"` (or whichever provider the existing mock setup implies — check the test's current mock target given Task 4's patch-target rename already applied to this file).
+
+Run the backend suite to confirm:
+```bash
+cd /Users/sedhuram/Documents/assignment/backend
+.venv/bin/pytest tests/api/test_observability.py -v
+```
+Expected: PASS, including the new/extended assertion.
 
 - [ ] **Step 1: Add `provider` to `DisplayMessage` and render a badge in `MessageBubble`**
 
