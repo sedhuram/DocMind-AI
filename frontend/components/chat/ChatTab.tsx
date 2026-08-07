@@ -29,6 +29,7 @@ export function ChatTab() {
             tokensIn: m.tokens_in,
             tokensOut: m.tokens_out,
             status: m.status,
+            provider: m.provider,
           }))
         );
       })
@@ -50,12 +51,12 @@ export function ChatTab() {
 
     const userMessage: DisplayMessage = {
       id: `local-user-${Date.now()}`, role: "user", content: text,
-      citations: [], latencyMs: null, tokensIn: null, tokensOut: null, status: "ok",
+      citations: [], latencyMs: null, tokensIn: null, tokensOut: null, status: "ok", provider: null,
     };
     const assistantId = `local-assistant-${Date.now()}`;
     const assistantMessage: DisplayMessage = {
       id: assistantId, role: "assistant", content: "",
-      citations: [], latencyMs: null, tokensIn: null, tokensOut: null, status: "ok",
+      citations: [], latencyMs: null, tokensIn: null, tokensOut: null, status: "ok", provider: null,
     };
     setMessages((prev) => [...prev, userMessage, assistantMessage]);
 
@@ -69,7 +70,7 @@ export function ChatTab() {
         setMessages((prev) =>
           prev.map((m) =>
             m.id === assistantId
-              ? { ...m, citations: payload.citations, latencyMs: payload.latency_ms, tokensIn: payload.tokens_in, tokensOut: payload.tokens_out, status: payload.status }
+              ? { ...m, citations: payload.citations, latencyMs: payload.latency_ms, tokensIn: payload.tokens_in, tokensOut: payload.tokens_out, status: payload.status, provider: payload.provider }
               : m
           )
         );

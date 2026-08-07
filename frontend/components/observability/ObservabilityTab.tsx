@@ -75,6 +75,7 @@ export function ObservabilityTab() {
                 <th>Chunks</th>
                 <th>Top score</th>
                 <th>Status</th>
+                <th>Provider</th>
               </tr>
             </thead>
             <tbody>
@@ -88,6 +89,7 @@ export function ObservabilityTab() {
                   <td>{row.chunks_retrieved ?? 0}</td>
                   <td>{row.top_score?.toFixed(2) ?? "-"}</td>
                   <td className={STATUS_COLOR[row.status] ?? ""}>{row.status}</td>
+                  <td>{row.provider ?? "-"}</td>
                 </tr>
               ))}
             </tbody>

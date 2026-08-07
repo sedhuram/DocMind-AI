@@ -12,6 +12,7 @@ export interface DisplayMessage {
   tokensIn: number | null;
   tokensOut: number | null;
   status: MessageStatus;
+  provider: string | null;
 }
 
 export interface MessageBubbleProps {
@@ -76,6 +77,10 @@ export function MessageBubble({ message, onOpenCitation }: MessageBubbleProps) {
             {message.latencyMs}ms · {message.tokensIn ?? 0}+{message.tokensOut ?? 0} tokens ·{" "}
             {message.citations.length} sources retrieved
           </p>
+        )}
+
+        {!isUser && message.provider && (
+          <p className="mt-0.5 text-xs text-[var(--foreground)]/40">via {message.provider}</p>
         )}
       </div>
     </div>
