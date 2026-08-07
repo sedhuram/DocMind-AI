@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import chat, documents, health, observability
+from app.api import settings as settings_router
 from app.core.config import settings
 from app.core.logging import configure_logging
 from app.db.session import SessionLocal, init_db
@@ -47,3 +48,4 @@ app.include_router(health.router, prefix="/api")
 app.include_router(documents.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
 app.include_router(observability.router, prefix="/api")
+app.include_router(settings_router.router, prefix="/api")
