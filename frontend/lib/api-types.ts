@@ -428,6 +428,8 @@ export interface components {
              * @default default
              */
             session_id: string;
+            /** Document Ids */
+            document_ids?: string[] | null;
         };
         /** ChatSessionCreate */
         ChatSessionCreate: {

@@ -13,9 +13,9 @@ class RetrievalResult:
     is_low_confidence: bool
 
 
-def retrieve(query: str, vector_store: VectorStore) -> RetrievalResult:
+def retrieve(query: str, vector_store: VectorStore, document_ids: list[str] | None = None) -> RetrievalResult:
     query_embedding = embed_query(query)
-    candidates = vector_store.query(query_embedding, settings.retrieval_top_k)
+    candidates = vector_store.query(query_embedding, settings.retrieval_top_k, document_ids=document_ids)
 
     seen: set[tuple[str, int]] = set()
     deduped: list[RetrievedChunk] = []

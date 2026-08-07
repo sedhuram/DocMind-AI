@@ -22,12 +22,14 @@ export function TabShell({
   chat,
   documents,
   observability,
+  onOpenLanding,
 }: {
   statusDot: ReactNode;
   providerSwitcher: ReactNode;
   chat: ReactNode;
   documents: ReactNode;
   observability: ReactNode;
+  onOpenLanding?: () => void;
 }) {
   const [active, setActive] = useState<TabId>("workspace");
   const [isPinBoardOpen, setIsPinBoardOpen] = useState(true);
@@ -109,7 +111,13 @@ export function TabShell({
     <div className="flex h-screen flex-col overflow-hidden relative">
       <header className="flex items-center justify-between border-b border-[var(--border)] px-6 py-2.5 bg-[var(--surface)] shrink-0 z-10 shadow-sm">
         <div className="flex items-center gap-3">
-          <span className="text-lg font-bold bg-gradient-to-r from-indigo-600 to-pink-600 bg-clip-text text-transparent dark:from-indigo-400 dark:to-pink-400">DocMind AI</span>
+          <button
+            onClick={onOpenLanding}
+            title="Return to Product Landing Page"
+            className="text-lg font-bold bg-gradient-to-r from-indigo-600 to-pink-600 bg-clip-text text-transparent dark:from-indigo-400 dark:to-pink-400 hover:opacity-80 transition-opacity cursor-pointer flex items-center gap-1.5"
+          >
+            <span>DocMind AI</span>
+          </button>
           <LlmHealthBadge />
           {statusDot}
         </div>

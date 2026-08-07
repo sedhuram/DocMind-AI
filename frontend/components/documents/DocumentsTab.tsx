@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Trash2, FileText, FileWarning, CheckCircle2, Loader2, X } from "lucide-react";
 import { apiClient, type DocumentOut } from "@/lib/api-client";
 import { UploadDropzone } from "@/components/documents/UploadDropzone";
+import { useChat } from "@/lib/chat-context";
 import { DocumentPreviewModal } from "@/components/documents/DocumentPreviewModal";
 
 const STATUS_ICON: Record<DocumentOut["status"], typeof CheckCircle2> = {
@@ -19,6 +20,8 @@ export function DocumentsTab() {
   const [isBusy, setIsBusy] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<DocumentOut | null>(null);
 
+  const { selectedDocumentIds, setSelectedDocumentIds } = useChat();
+
   async function refresh() {
     try {
       const docs = await apiClient.listDocuments();
@@ -33,7 +36,6 @@ export function DocumentsTab() {
     refresh();
   }, []);
 
-  // Listen to external refresh request (e.g. from paste-to-file in chat tab)
   useEffect(() => {
     const handleRefresh = () => {
       refresh();
@@ -41,6 +43,15 @@ export function DocumentsTab() {
     window.addEventListener("refreshDocuments", handleRefresh);
     return () => window.removeEventListener("refreshDocuments", handleRefresh);
   }, []);
+
+  const toggleDocSelection = (docId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (selectedDocumentIds.includes(docId)) {
+      setSelectedDocumentIds(selectedDocumentIds.filter((id) => id !== docId));
+    } else {
+      setSelectedDocumentIds([...selectedDocumentIds, docId]);
+    }
+  };
 
   async function handleFiles(files: File[]) {
     if (isBusy || files.length === 0) return;
@@ -86,7 +97,7 @@ export function DocumentsTab() {
       <div className="mb-3 flex items-center justify-between border-b border-[var(--border)]/70 pb-2.5 shrink-0">
         <div className="flex flex-col">
           <h2 className="text-xs font-bold text-[var(--foreground)]">Documents</h2>
-          <p className="text-[9px] text-[var(--foreground)]/50 font-medium">Index or manage files (.pdf, .docx, .csv, .xlsx)</p>
+          <p className="text-[9px] text-[var(--foreground)]/50 font-medium">Index & select files for RAG context</p>
         </div>
         <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${limitReached ? "bg-amber-500/15 text-amber-600" : "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400"}`}>
           {documents.length} / 10
@@ -132,31 +143,46 @@ export function DocumentsTab() {
         ) : (
           documents.map((doc) => {
             const StatusIcon = STATUS_ICON[doc.status];
+            const isSelected = selectedDocumentIds.length === 0 || selectedDocumentIds.includes(doc.id);
             return (
               <div
                 key={doc.id}
-                className="relative rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2.5 shadow-xs hover:border-[var(--accent)]/40 hover:bg-[var(--accent)]/5 transition-all duration-150 group cursor-pointer"
+                className={`relative rounded-lg border p-2.5 shadow-xs transition-all duration-150 group cursor-pointer ${
+                  isSelected
+                    ? "border-[var(--accent)]/50 bg-[var(--surface)] hover:bg-[var(--accent)]/5"
+                    : "border-[var(--border)]/50 bg-[var(--surface)]/50 opacity-60 hover:opacity-100"
+                }`}
                 onClick={() => setPreviewDoc(doc)}
               >
                 <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1 min-w-0 pr-3">
-                    <h4 className="text-[11px] font-bold text-[var(--foreground)] truncate group-hover:text-[var(--accent)] transition-colors" title={doc.filename}>
-                      {doc.filename}
-                    </h4>
-                    <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                      <span className="rounded bg-[var(--border)] px-1 py-0.5 text-[8px] font-bold text-[var(--foreground)]/50 uppercase">
-                        {doc.source_type}
-                      </span>
-                      <span className={`inline-flex items-center gap-0.5 text-[8px] font-bold ${
-                        doc.status === "failed" ? "text-red-500" : doc.status === "processing" ? "text-amber-500" : "text-emerald-500"
-                      }`}>
-                        <StatusIcon size={8} className={doc.status === "processing" ? "animate-spin" : ""} />
-                        {doc.status}
-                      </span>
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={(e) => toggleDocSelection(doc.id, e as any)}
+                      onClick={(e) => e.stopPropagation()}
+                      title="Include this document in chat RAG query context"
+                      className="rounded border-[var(--border)] text-[var(--accent)] focus:ring-0 cursor-pointer h-3.5 w-3.5 shrink-0"
+                    />
+                    <div className="min-w-0 flex-1 pr-2">
+                      <h4 className="text-[11px] font-bold text-[var(--foreground)] truncate group-hover:text-[var(--accent)] transition-colors" title={doc.filename}>
+                        {doc.filename}
+                      </h4>
+                      <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                        <span className="rounded bg-[var(--border)] px-1 py-0.5 text-[8px] font-bold text-[var(--foreground)]/50 uppercase">
+                          {doc.source_type}
+                        </span>
+                        <span className={`inline-flex items-center gap-0.5 text-[8px] font-bold ${
+                          doc.status === "failed" ? "text-red-500" : doc.status === "processing" ? "text-amber-500" : "text-emerald-500"
+                        }`}>
+                          <StatusIcon size={8} className={doc.status === "processing" ? "animate-spin" : ""} />
+                          {doc.status}
+                        </span>
+                      </div>
+                      <p className="text-[8px] text-[var(--foreground)]/45 mt-1 font-medium">
+                        {(doc.size_bytes / 1024).toFixed(1)} KB · {doc.chunk_count} chunks
+                      </p>
                     </div>
-                    <p className="text-[8px] text-[var(--foreground)]/45 mt-1 font-medium">
-                      {(doc.size_bytes / 1024).toFixed(1)} KB · {doc.chunk_count} chunks
-                    </p>
                   </div>
                   <div className="shrink-0 flex items-center justify-center">
                     {doc.source_type === "upload" ? (

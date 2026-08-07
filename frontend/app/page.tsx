@@ -8,9 +8,11 @@ import { DocumentsTab } from "@/components/documents/DocumentsTab";
 import { ObservabilityTab } from "@/components/observability/ObservabilityTab";
 import { StatusDot } from "@/components/StatusDot";
 import { ProviderSwitcher } from "@/components/ProviderSwitcher";
+import { LandingPage } from "@/components/landing/LandingPage";
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
+  const [view, setView] = useState<"landing" | "workspace">("landing");
 
   useEffect(() => {
     setMounted(true);
@@ -21,10 +23,14 @@ export default function Home() {
       <div className="h-screen w-screen flex items-center justify-center bg-[var(--background)] text-[var(--foreground)]">
         <div className="flex flex-col items-center gap-3">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-[var(--accent)] border-t-transparent" />
-          <span className="text-xs font-bold font-mono text-[var(--foreground)]/70">Loading DocMind AI Workspace...</span>
+          <span className="text-xs font-bold font-mono text-[var(--foreground)]/70">Loading DocMind AI...</span>
         </div>
       </div>
     );
+  }
+
+  if (view === "landing") {
+    return <LandingPage onLaunch={() => setView("workspace")} />;
   }
 
   return (
@@ -35,6 +41,7 @@ export default function Home() {
         chat={<ChatTab />}
         documents={<DocumentsTab />}
         observability={<ObservabilityTab />}
+        onOpenLanding={() => setView("landing")}
       />
     </ChatProvider>
   );

@@ -47,6 +47,7 @@ class DocumentOut(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     session_id: str = "default"
+    document_ids: list[str] | None = None
 
 
 class ChatMessageOut(BaseModel):

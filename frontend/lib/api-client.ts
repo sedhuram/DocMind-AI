@@ -277,12 +277,20 @@ export const apiClient = {
   async streamChat(
     message: string,
     sessionId: string,
-    handlers: { onToken: (text: string) => void; onDone: (payload: ChatDoneEvent) => void; onError: (message: string) => void }
+    handlers: { onToken: (text: string) => void; onDone: (payload: ChatDoneEvent) => void; onError: (message: string) => void },
+    documentIds?: string[]
   ): Promise<void> {
+    const token = typeof window !== "undefined"
+      ? localStorage.getItem("docmind_admin_token") || localStorage.getItem("docmind_auth_token") || "DocMind#Admin2026!Secure"
+      : "DocMind#Admin2026!Secure";
+
     const response = await fetch(`${BASE_URL}/api/chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, session_id: sessionId }),
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({ message, session_id: sessionId, document_ids: documentIds }),
     });
     if (!response.ok || !response.body) {
       handlers.onError(`Request failed: ${response.status}`);

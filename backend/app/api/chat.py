@@ -130,7 +130,7 @@ def chat(
         generate_fn = ollama_generation_service.stream_generate if provider == "ollama" else generation_service.stream_generate
 
         try:
-            retrieval = retrieve(payload.message, vector_store)
+            retrieval = retrieve(payload.message, vector_store, document_ids=payload.document_ids)
             contents = build_contents(payload.message, retrieval, history_snapshot)
             status = "low_confidence" if retrieval.is_low_confidence else "ok"
 

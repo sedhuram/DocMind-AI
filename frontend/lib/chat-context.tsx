@@ -30,6 +30,10 @@ export interface ChatContextType {
   clearActiveSessionHistory: () => Promise<void>;
   renameSession: (id: string, title: string) => Promise<void>;
   
+  // Document context filtering
+  selectedDocumentIds: string[];
+  setSelectedDocumentIds: (ids: string[]) => void;
+
   // Message Editing & Copying
   editAndResubmitMessage: (messageId: string, newText: string) => Promise<void>;
 
@@ -69,6 +73,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [notes, setNotes] = useState<Note[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
 
   // Mindmap Studio state
   const [activeMindmap, setActiveMindmap] = useState<MindmapResponse | null>(null);
@@ -80,7 +85,16 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [pastedFilename, setPastedFilename] = useState("");
   const [pasteSuccess, setPasteSuccess] = useState(false);
 
-  const activeStreamSessionId = useRef<string | null>(null);
+  // Background sessions streaming storage
+  const sessionMessagesRef = useRef<Map<string, DisplayMessage[]>>(new Map());
+  const activeStreamsRef = useRef<Set<string>>(new Set());
+
+  // Sync activeSessionId with background streaming status
+  const currentActiveSessionRef = useRef<string>(activeSessionId);
+  useEffect(() => {
+    currentActiveSessionRef.current = activeSessionId;
+    setIsStreaming(activeStreamsRef.current.has(activeSessionId));
+  }, [activeSessionId]);
 
   // Load initial sessions & notes from localStorage
   useEffect(() => {
@@ -98,38 +112,38 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       try {
         setNotes(JSON.parse(savedNotes));
       } catch (e) {
-        console.error("Failed to parse notes:", e);
+        console.error("Failed to parse scratchpad notes:", e);
       }
     }
   }, []);
 
-  // Fetch messages when activeSessionId changes
+  // Fetch messages when active session changes
   useEffect(() => {
     if (!activeSessionId) return;
-    if (isStreaming && activeStreamSessionId.current === activeSessionId) {
-      return;
-    }
 
-    apiClient.getHistory(activeSessionId)
-      .then((history) => {
-        setMessages(
-          history.map((m) => ({
+    // Check if session has in-memory streaming messages
+    if (sessionMessagesRef.current.has(activeSessionId)) {
+      setMessages([...(sessionMessagesRef.current.get(activeSessionId) || [])]);
+    } else {
+      apiClient.getHistory(activeSessionId)
+        .then((res) => {
+          const mapped: DisplayMessage[] = res.map((m) => ({
             id: m.id,
-            role: m.role,
+            role: m.role as "user" | "assistant",
             content: m.content,
-            citations: m.citations,
+            citations: typeof m.citations === "string" ? JSON.parse(m.citations) : (m.citations || []),
             latencyMs: m.latency_ms,
             tokensIn: m.tokens_in,
             tokensOut: m.tokens_out,
-            status: m.status as any,
-            provider: m.provider,
-          }))
-        );
-      })
-      .catch((err) => {
-        console.error("Failed to load history for session", activeSessionId, err);
-      });
-  }, [activeSessionId, isStreaming]);
+            status: (m.status as any) || "ok",
+            provider: m.provider || null,
+          }));
+          sessionMessagesRef.current.set(activeSessionId, mapped);
+          setMessages(mapped);
+        })
+        .catch((err) => console.error(`Failed to load messages for session ${activeSessionId}:`, err));
+    }
+  }, [activeSessionId]);
 
   // Toast Actions
   const addToast = (message: string, type: Toast["type"] = "info") => {
@@ -170,6 +184,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     try {
       await apiClient.deleteSession(id);
       setSessions((prev) => prev.filter((s) => s.id !== id));
+      sessionMessagesRef.current.delete(id);
       addToast("Deleted chat session.", "success");
       if (activeSessionId === id) {
         const remaining = sessions.filter((s) => s.id !== id);
@@ -187,6 +202,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const clearActiveSessionHistory = async () => {
     try {
       await apiClient.clearHistory(activeSessionId);
+      sessionMessagesRef.current.set(activeSessionId, []);
       setMessages([]);
       addToast("Cleared history.", "success");
     } catch {
@@ -196,8 +212,11 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
   // Resubmit Stream (used after editing message)
   const resubmitStream = async (text: string) => {
-    setIsStreaming(true);
-    activeStreamSessionId.current = activeSessionId;
+    const targetSessionId = activeSessionId;
+    activeStreamsRef.current.add(targetSessionId);
+    if (currentActiveSessionRef.current === targetSessionId) {
+      setIsStreaming(true);
+    }
 
     const assistantId = `local-assistant-${Date.now()}`;
     const assistantMessage: DisplayMessage = {
@@ -205,48 +224,65 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       citations: [], latencyMs: null, tokensIn: null, tokensOut: null, status: "ok", provider: null,
     };
 
-    setMessages((prev) => [...prev, assistantMessage]);
+    const currentMsgs = sessionMessagesRef.current.get(targetSessionId) || [];
+    const updatedMsgs = [...currentMsgs, assistantMessage];
+    sessionMessagesRef.current.set(targetSessionId, updatedMsgs);
 
-    const targetSessionId = activeSessionId;
+    if (currentActiveSessionRef.current === targetSessionId) {
+      setMessages([...updatedMsgs]);
+    }
+
+    const docFilter = selectedDocumentIds.length > 0 ? selectedDocumentIds : undefined;
 
     apiClient.streamChat(text, targetSessionId, {
       onToken: (delta) => {
-        setMessages((prev) => {
-          if (activeStreamSessionId.current !== targetSessionId) return prev;
-          return prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + delta } : m));
-        });
+        const msgs = sessionMessagesRef.current.get(targetSessionId) || [];
+        const nextMsgs = msgs.map((m) => (m.id === assistantId ? { ...m, content: m.content + delta } : m));
+        sessionMessagesRef.current.set(targetSessionId, nextMsgs);
+
+        if (currentActiveSessionRef.current === targetSessionId) {
+          setMessages([...nextMsgs]);
+        }
       },
       onDone: (payload) => {
-        setMessages((prev) => {
-          if (activeStreamSessionId.current !== targetSessionId) return prev;
-          return prev.map((m) =>
-            m.id === assistantId
-              ? {
-                  ...m,
-                  citations: payload.citations,
-                  latencyMs: payload.latency_ms,
-                  tokensIn: payload.tokens_in,
-                  tokensOut: payload.tokens_out,
-                  status: payload.status,
-                  provider: payload.provider,
-                }
-              : m
-          );
-        });
+        const msgs = sessionMessagesRef.current.get(targetSessionId) || [];
+        const nextMsgs = msgs.map((m) =>
+          m.id === assistantId
+            ? {
+                ...m,
+                citations: payload.citations,
+                latencyMs: payload.latency_ms,
+                tokensIn: payload.tokens_in,
+                tokensOut: payload.tokens_out,
+                status: payload.status,
+                provider: payload.provider,
+              }
+            : m
+        );
+        sessionMessagesRef.current.set(targetSessionId, nextMsgs);
+        activeStreamsRef.current.delete(targetSessionId);
 
-        setIsStreaming(false);
-        activeStreamSessionId.current = null;
+        if (currentActiveSessionRef.current === targetSessionId) {
+          setMessages([...nextMsgs]);
+          setIsStreaming(false);
+        } else {
+          const sessObj = sessions.find(s => s.id === targetSessionId);
+          addToast(`Response ready in session "${sessObj?.title || targetSessionId}"`, "success");
+        }
       },
       onError: (message) => {
-        setMessages((prev) => {
-          if (activeStreamSessionId.current !== targetSessionId) return prev;
-          return prev.map((m) => (m.id === assistantId ? { ...m, content: message, status: "error" } : m));
-        });
-        setIsStreaming(false);
-        activeStreamSessionId.current = null;
+        const msgs = sessionMessagesRef.current.get(targetSessionId) || [];
+        const nextMsgs = msgs.map((m) => (m.id === assistantId ? { ...m, content: message, status: "error" as const } : m));
+        sessionMessagesRef.current.set(targetSessionId, nextMsgs);
+        activeStreamsRef.current.delete(targetSessionId);
+
+        if (currentActiveSessionRef.current === targetSessionId) {
+          setMessages([...nextMsgs]);
+          setIsStreaming(false);
+        }
         addToast("Error generating response.", "error");
       },
-    });
+    }, docFilter);
   };
 
   // Edit Message
@@ -254,13 +290,14 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     if (!newText.trim() || isStreaming) return;
     try {
       await apiClient.editMessage(messageId, newText);
-      setMessages((prev) => {
-        const idx = prev.findIndex((m) => m.id === messageId);
-        if (idx === -1) return prev;
-        const truncated = prev.slice(0, idx + 1);
+      const currentMsgs = sessionMessagesRef.current.get(activeSessionId) || [];
+      const idx = currentMsgs.findIndex((m) => m.id === messageId);
+      if (idx !== -1) {
+        const truncated = currentMsgs.slice(0, idx + 1);
         truncated[idx] = { ...truncated[idx], content: newText };
-        return truncated;
-      });
+        sessionMessagesRef.current.set(activeSessionId, truncated);
+        setMessages([...truncated]);
+      }
 
       // Trigger the assistant reply stream in timeout
       setTimeout(() => {
@@ -295,10 +332,13 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
   // Streaming generation (Initial query)
   const sendMessage = async (text: string) => {
-    if (!text.trim() || isStreaming) return;
+    if (!text.trim()) return;
 
-    setIsStreaming(true);
-    activeStreamSessionId.current = activeSessionId;
+    const targetSessionId = activeSessionId;
+    activeStreamsRef.current.add(targetSessionId);
+    if (currentActiveSessionRef.current === targetSessionId) {
+      setIsStreaming(true);
+    }
 
     const userMsgId = `local-user-${Date.now()}`;
     const userMessage: DisplayMessage = {
@@ -311,37 +351,51 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       citations: [], latencyMs: null, tokensIn: null, tokensOut: null, status: "ok", provider: null,
     };
 
-    setMessages((prev) => [...prev, userMessage, assistantMessage]);
+    const currentMsgs = sessionMessagesRef.current.get(targetSessionId) || messages;
+    const updatedMsgs = [...currentMsgs, userMessage, assistantMessage];
+    sessionMessagesRef.current.set(targetSessionId, updatedMsgs);
 
-    const targetSessionId = activeSessionId;
+    if (currentActiveSessionRef.current === targetSessionId) {
+      setMessages([...updatedMsgs]);
+    }
+
+    const docFilter = selectedDocumentIds.length > 0 ? selectedDocumentIds : undefined;
 
     apiClient.streamChat(text, targetSessionId, {
       onToken: (delta) => {
-        setMessages((prev) => {
-          if (activeStreamSessionId.current !== targetSessionId) return prev;
-          return prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + delta } : m));
-        });
+        const msgs = sessionMessagesRef.current.get(targetSessionId) || [];
+        const nextMsgs = msgs.map((m) => (m.id === assistantId ? { ...m, content: m.content + delta } : m));
+        sessionMessagesRef.current.set(targetSessionId, nextMsgs);
+
+        if (currentActiveSessionRef.current === targetSessionId) {
+          setMessages([...nextMsgs]);
+        }
       },
       onDone: (payload) => {
-        setMessages((prev) => {
-          if (activeStreamSessionId.current !== targetSessionId) return prev;
-          return prev.map((m) =>
-            m.id === assistantId
-              ? {
-                  ...m,
-                  citations: payload.citations,
-                  latencyMs: payload.latency_ms,
-                  tokensIn: payload.tokens_in,
-                  tokensOut: payload.tokens_out,
-                  status: payload.status,
-                  provider: payload.provider,
-                }
-              : m
-          );
-        });
+        const msgs = sessionMessagesRef.current.get(targetSessionId) || [];
+        const nextMsgs = msgs.map((m) =>
+          m.id === assistantId
+            ? {
+                ...m,
+                citations: payload.citations,
+                latencyMs: payload.latency_ms,
+                tokensIn: payload.tokens_in,
+                tokensOut: payload.tokens_out,
+                status: payload.status,
+                provider: payload.provider,
+              }
+            : m
+        );
+        sessionMessagesRef.current.set(targetSessionId, nextMsgs);
+        activeStreamsRef.current.delete(targetSessionId);
 
-        setIsStreaming(false);
-        activeStreamSessionId.current = null;
+        if (currentActiveSessionRef.current === targetSessionId) {
+          setMessages([...nextMsgs]);
+          setIsStreaming(false);
+        } else {
+          const sessObj = sessions.find(s => s.id === targetSessionId);
+          addToast(`Response ready in session "${sessObj?.title || targetSessionId}"`, "success");
+        }
 
         // Auto-rename session title based on prompt
         const currentSession = sessions.find(s => s.id === targetSessionId);
@@ -349,22 +403,20 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           const newTitle = text.length > 25 ? text.substring(0, 25) + "..." : text;
           renameSession(targetSessionId, newTitle);
         }
-
-        const currentTabName = localStorage.getItem("docmind_active_tab") || "chat";
-        if (currentTabName !== "chat" || activeSessionId !== targetSessionId) {
-          addToast(`Response complete: "${text.substring(0, 30)}..."`, "success");
-        }
       },
       onError: (message) => {
-        setMessages((prev) => {
-          if (activeStreamSessionId.current !== targetSessionId) return prev;
-          return prev.map((m) => (m.id === assistantId ? { ...m, content: message, status: "error" } : m));
-        });
-        setIsStreaming(false);
-        activeStreamSessionId.current = null;
+        const msgs = sessionMessagesRef.current.get(targetSessionId) || [];
+        const nextMsgs = msgs.map((m) => (m.id === assistantId ? { ...m, content: message, status: "error" as const } : m));
+        sessionMessagesRef.current.set(targetSessionId, nextMsgs);
+        activeStreamsRef.current.delete(targetSessionId);
+
+        if (currentActiveSessionRef.current === targetSessionId) {
+          setMessages([...nextMsgs]);
+          setIsStreaming(false);
+        }
         addToast("Error generating response.", "error");
       },
-    });
+    }, docFilter);
   };
 
   // Scratchpad operations
@@ -435,6 +487,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         deleteSession,
         renameSession,
         clearActiveSessionHistory,
+        selectedDocumentIds,
+        setSelectedDocumentIds,
         
         editAndResubmitMessage,
 

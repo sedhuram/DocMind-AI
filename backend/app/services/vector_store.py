@@ -56,14 +56,29 @@ class VectorStore:
         ]
         self._collection.add(ids=ids, embeddings=embeddings, documents=chunks, metadatas=metadatas)
 
-    def query(self, query_embedding: list[float], top_k: int) -> list[RetrievedChunk]:
+    def query(self, query_embedding: list[float], top_k: int, document_ids: list[str] | None = None) -> list[RetrievedChunk]:
         if self.count() == 0:
             return []
-        result = self._collection.query(
-            query_embeddings=[query_embedding],
-            n_results=min(top_k, self.count()),
-            include=["documents", "metadatas", "distances"],
-        )
+
+        where_filter = None
+        if document_ids:
+            if len(document_ids) == 1:
+                where_filter = {"document_id": document_ids[0]}
+            elif len(document_ids) > 1:
+                where_filter = {"document_id": {"$in": document_ids}}
+
+        kwargs = {
+            "query_embeddings": [query_embedding],
+            "n_results": min(top_k, self.count()),
+            "include": ["documents", "metadatas", "distances"],
+        }
+        if where_filter:
+            kwargs["where"] = where_filter
+
+        result = self._collection.query(**kwargs)
+        if not result["documents"] or not result["documents"][0]:
+            return []
+
         return [
             self._to_chunk(doc, meta, distance)
             for doc, meta, distance in zip(result["documents"][0], result["metadatas"][0], result["distances"][0])
