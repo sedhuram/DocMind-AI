@@ -19,7 +19,7 @@ docker compose up --build
 
 On first boot, the backend scans `backend/data/static/` and indexes whatever's there (two seed docs about DocMind AI itself are included, so there's something to query immediately). Drop more files into that directory and restart, or just drag-and-drop into the Documents tab.
 
-**Note on this repo's provenance:** I couldn't run Docker in the sandboxed environment I built this in, so the two Dockerfiles and `docker-compose.yml` are correct by careful static trace (port mappings, volume paths, layer ordering, build-arg wiring — all checked by hand against the actual app code) but not build-verified. Everything else — the full RAG pipeline, all 59 backend tests, both frontend dev servers — I verified for real, including one live end-to-end run against the actual Gemini API (see "What I actually verified" below). Run `docker compose up --build` locally before you trust the container path; I'd bet on it working, but "static trace" and "I watched it boot" are different confidence levels and I'm not going to blur that line here.
+**Note on this repo's provenance:** I couldn't run Docker in the sandboxed environment I built this in, so the two Dockerfiles and `docker-compose.yml` are correct by careful static trace (port mappings, volume paths, layer ordering, build-arg wiring — all checked by hand against the actual app code) but not build-verified. Everything else — the full RAG pipeline, all 65 backend tests, both frontend dev servers — I verified for real, including one live end-to-end run against the actual Gemini API (see "What I actually verified" below). Run `docker compose up --build` locally before you trust the container path; I'd bet on it working, but "static trace" and "I watched it boot" are different confidence levels and I'm not going to blur that line here.
 
 ## Architecture
 
@@ -63,7 +63,7 @@ Two containers, no auth, single conversation thread, single document collection.
 
 I want to be specific about this because "I tested it" means different things depending on who's saying it.
 
-- **59 backend pytest tests**, all passing, covering chunking boundaries, PDF/DOCX/TXT/MD parsing (with real generated fixture files, not mocked text), embedding normalization, vector store cosine-similarity math, ingestion dedup, retrieval context-budget truncation, prompt assembly, generation retry/backoff logic, and every API route with a mocked Gemini client (so the suite runs with zero network access and zero API key requirement).
+- **65 backend pytest tests**, all passing, covering chunking boundaries, PDF/DOCX/TXT/MD parsing (with real generated fixture files, not mocked text), embedding normalization, vector store cosine-similarity math, ingestion dedup, retrieval context-budget truncation, prompt assembly, generation retry/backoff logic, upload filename sanitization, citation payload round-tripping through the JSON column, and every API route with a mocked Gemini client (so the suite runs with zero network access and zero API key requirement).
 - **One real, live end-to-end run** against the actual Gemini API, not a mock: asked "What file types does DocMind AI support?" against the two seed documents, got back a real streamed answer — *"DocMind AI supports PDF, TXT, Markdown, and DOCX files [Source 1]"* — with a citation to `docmind-faq.md` at similarity score 0.7376 and a 2.9s round trip. That's the proof the retrieval → prompt → generation → citation pipeline actually works together, not just in isolation.
 - **Both dev servers** (`uvicorn` and `next dev`) booted and served real pages, confirmed by curl and by reading the actual response bodies, not by assuming a command exited 0.
 - **Docker itself: not build-verified**, for the reason above. This is the one place I'm asking you to trust careful reasoning over a green checkmark.
@@ -128,7 +128,7 @@ That `DetachedInstanceError` is worth a specific mention because it's the best e
 **Followed:**
 - TDD for every backend module — chunking, parsers, embedding, vector store, ingestion, retrieval, prompt, generation, and every API route were written test-first, with the failing state actually run and captured before the implementation existed.
 - Structured logging and per-request metrics from day one, not bolted on later.
-- Type safety across the stack boundary — the frontend's TypeScript types are generated from FastAPI's live OpenAPI schema (`scripts/generate-types.sh`), not hand-guessed and left to drift.
+- Type safety across the stack boundary — the frontend's TypeScript types are generated from FastAPI's live OpenAPI schema (`scripts/generate-types.sh` → `frontend/lib/api-types.ts`), not hand-guessed and left to drift. `lib/api-client.ts` derives every response type from that generated file, so renaming a backend field breaks the frontend build instead of failing silently at runtime. The one deliberate exception: a few `str` fields (document `status`, message `status`) are re-narrowed to literal unions in the client, because the backend produces those values in code rather than via an Enum, so OpenAPI can only describe them as `string`.
 - Zero hardcoded secrets — every config value flows through `pydantic-settings` reading `.env`, with `.env.example` committed and `.env` gitignored.
 - Every mocked test boundary is the actual I/O edge (Gemini API calls), never the logic under test — the vector store tests hit a real ephemeral ChromaDB instance, the ingestion tests hit real SQLite, because mocking those would mean testing my mocks instead of my code.
 
@@ -186,6 +186,12 @@ In roughly the order I'd tackle them:
 3. **Async ingestion** — move upload processing off the request path before it becomes a real bottleneck, not after.
 4. **Resumable streaming** — fix the honest gap where a mid-stream Gemini failure currently means "start the answer over" instead of "resume from where it broke."
 5. **A small eval set** — a fixed list of question/expected-citation pairs run against the seed documents, checked into the repo, so a future change to chunking or retrieval parameters has a regression signal beyond "it still returns something."
+6. **Static document reconciliation** — editing or deleting a file in `data/static/` doesn't clean up its old indexed version. The bootstrap only *adds* new-or-changed files (keyed by content hash), so an edited file produces a second `Document` row and a second set of vectors under the same filename while the stale ones stay queryable forever, and a deleted file's vectors are unreachable via the API (`DELETE` is intentionally blocked for `source_type=static`). For a real deployment I'd add a diff-and-prune pass to the bootstrap: any indexed static-sourced document whose file no longer exists — or whose content hash no longer matches — gets its vectors and DB row removed before the new ones are added.
+
+### Known limitations worth stating plainly
+
+- **Citation badges show what was *retrieved*, not what was *cited*.** Every chunk handed to the model as context gets a badge and counts toward the "N sources retrieved" footer, even if the model grounded its answer in only one of them. The UI labels this honestly rather than implying verified attribution; deriving true citations would mean parsing the `[Source N]` markers back out of the completed answer.
+- **Static documents are add-only** — see item 6 above.
 
 ## Screenshots
 

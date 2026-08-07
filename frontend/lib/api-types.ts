@@ -189,6 +189,19 @@ export interface components {
             /** Message */
             message: string;
         };
+        /** ChunkOut */
+        ChunkOut: {
+            /** Document Id */
+            document_id: string;
+            /** Filename */
+            filename: string;
+            /** Chunk Index */
+            chunk_index: number;
+            /** Page Number */
+            page_number?: number | null;
+            /** Text */
+            text: string;
+        };
         /** Citation */
         Citation: {
             /** Document Id */
@@ -243,6 +256,30 @@ export interface components {
             sqlite_ok: boolean;
             /** Uptime Seconds */
             uptime_seconds: number;
+        };
+        /** ObservabilityRow */
+        ObservabilityRow: {
+            /** Id */
+            id: string;
+            /** Query */
+            query: string;
+            /** Latency Ms */
+            latency_ms?: number | null;
+            /** Tokens In */
+            tokens_in?: number | null;
+            /** Tokens Out */
+            tokens_out?: number | null;
+            /** Chunks Retrieved */
+            chunks_retrieved?: number | null;
+            /** Top Score */
+            top_score?: number | null;
+            /** Status */
+            status: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -382,7 +419,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ChunkOut"];
                 };
             };
             /** @description Validation Error */
@@ -484,7 +521,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>[];
+                    "application/json": components["schemas"]["ObservabilityRow"][];
                 };
             };
             /** @description Validation Error */

@@ -1,59 +1,46 @@
+import type { components } from "./api-types";
+
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
-export interface Citation {
-  document_id: string;
-  filename: string;
-  chunk_index: number;
-  page_number: number | null;
-  score: number;
-}
+// Every type below that corresponds to a FastAPI `response_model` is derived from
+// `api-types.ts`, which `scripts/generate-types.sh` regenerates from the backend's live
+// OpenAPI schema. Renaming or dropping a backend field is therefore a compile error here
+// rather than a runtime surprise.
+type Schemas = components["schemas"];
 
-export interface DocumentOut {
-  id: string;
-  filename: string;
+// Pydantic fields carrying a default serialize into OpenAPI as optional (`?:`), which
+// openapi-typescript widens to `T | null | undefined`. Every one of ours is already
+// explicitly `| null`, so `-?` drops the redundant `undefined` and keeps the nullability
+// the UI actually branches on.
+type Concrete<T> = { [K in keyof T]-?: T[K] };
+
+export type Citation = Concrete<Schemas["Citation"]>;
+
+export type ChunkOut = Concrete<Schemas["ChunkOut"]>;
+
+export type HealthOut = Concrete<Schemas["HealthOut"]>;
+
+export type ObservabilityRow = Concrete<Schemas["ObservabilityRow"]>;
+
+export type MessageStatus = "ok" | "low_confidence" | "error";
+
+// The backend types these as plain `str` (the values are produced in code, not constrained
+// by an Enum), so the generated schema can only say `string`. The literal unions are
+// layered back on here because components index into them (e.g. DocumentsTab's
+// STATUS_ICON map) and would silently lose exhaustiveness against a bare `string`.
+export type DocumentOut = Omit<Concrete<Schemas["DocumentOut"]>, "source_type" | "status"> & {
   source_type: "static" | "upload";
   status: "processing" | "indexed" | "failed";
-  status_detail: string | null;
-  chunk_count: number;
-  size_bytes: number;
-  created_at: string;
-  indexed_at: string | null;
-}
+};
 
-export interface ChatMessageOut {
-  id: string;
+export type ChatMessageOut = Omit<Concrete<Schemas["ChatMessageOut"]>, "role" | "status" | "citations"> & {
   role: "user" | "assistant";
-  content: string;
   citations: Citation[];
-  latency_ms: number | null;
-  tokens_in: number | null;
-  tokens_out: number | null;
-  chunks_retrieved: number | null;
-  top_score: number | null;
-  status: "ok" | "low_confidence" | "error";
-  created_at: string;
-}
+  status: MessageStatus;
+};
 
-export interface HealthOut {
-  status: string;
-  gemini_configured: boolean;
-  chroma_document_count: number;
-  sqlite_ok: boolean;
-  uptime_seconds: number;
-}
-
-export interface ObservabilityRow {
-  id: string;
-  query: string;
-  latency_ms: number | null;
-  tokens_in: number | null;
-  tokens_out: number | null;
-  chunks_retrieved: number | null;
-  top_score: number | null;
-  status: string;
-  created_at: string;
-}
-
+// Hand-written on purpose: this is an SSE frame payload assembled inside the streaming
+// generator, not a route `response_model`, so it has no generated counterpart.
 export interface ChatDoneEvent {
   citations: Citation[];
   tokens_in: number;
@@ -61,7 +48,7 @@ export interface ChatDoneEvent {
   latency_ms: number;
   chunks_retrieved: number;
   top_score: number;
-  status: "ok" | "low_confidence" | "error";
+  status: MessageStatus;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -88,13 +75,7 @@ export const apiClient = {
   deleteDocument: (id: string) => request<void>(`/api/documents/${id}`, { method: "DELETE" }),
 
   getChunk: (documentId: string, chunkIndex: number) =>
-    request<{
-      document_id: string;
-      filename: string;
-      chunk_index: number;
-      page_number: number | null;
-      text: string;
-    }>(`/api/documents/${documentId}/chunks/${chunkIndex}`),
+    request<ChunkOut>(`/api/documents/${documentId}/chunks/${chunkIndex}`),
 
   getHistory: () => request<ChatMessageOut[]>("/api/chat/history"),
 

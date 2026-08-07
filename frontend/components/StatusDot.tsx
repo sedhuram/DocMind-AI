@@ -11,7 +11,13 @@ export function StatusDot() {
     const check = () =>
       apiClient
         .getHealth()
-        .then((health) => !cancelled && setIsHealthy(health.status === "ok" && health.sqlite_ok))
+        // `gemini_configured` counts: with a missing/empty GEMINI_API_KEY the process is
+        // up and SQLite is fine, but every chat and upload will fail - a green dot there
+        // would be actively misleading.
+        .then(
+          (health) =>
+            !cancelled && setIsHealthy(health.status === "ok" && health.sqlite_ok && health.gemini_configured)
+        )
         .catch(() => !cancelled && setIsHealthy(false));
 
     check();
