@@ -6,6 +6,50 @@ A RAG assistant that answers questions over a document collection, with citation
 
 This document covers what I built, the reasoning behind the RAG-specific choices, what I left out on purpose, and — since a few things below don't hold up to full scrutiny — where the honest state of the code is weaker than the feature list makes it sound.
 
+## Feature tour
+
+A flat description of "it's a RAG chatbot" undersells what's actually clickable in this app, so here's the fuller list — including the small interaction details that don't show up in an architecture diagram but are the difference between a demo and something pleasant to actually use. (For a plain read on which of these are production-solid versus demo-grade, see "What's actually in here" further down — this section is the tour, that one is the audit.)
+
+**Retrieval and answering**
+- Six input formats — PDF, DOCX, TXT, MD, CSV, XLSX — so spreadsheets and tabular exports are queryable alongside prose, not a separate workflow.
+- Page-accurate citations: chunking never crosses a page boundary, so a "page 4" badge on an answer is genuinely page 4, not an approximation.
+- A retrieval-confidence signal computed before generation — if the best-matching chunk scores below threshold, the turn is flagged low-confidence in the UI instead of letting a shaky answer look as certain as a solid one.
+- Token-by-token streaming over SSE, so an answer starts appearing in under a second rather than waiting on the full generation.
+- Per-chat document scoping — checkbox-select which indexed files are in play for a given question, so "what does this one report say" doesn't have to search the whole collection.
+
+**Dual LLM providers**
+- Live switching between Gemini and a local Ollama model, with the target provider connectivity-checked before the switch is accepted — no silent failure on a dead endpoint.
+- A hot-reloadable engine panel: API key, generation model, Ollama URL/model, retrieval top-K, chunk size and overlap, and the low-confidence threshold are all editable at runtime and take effect without a restart.
+- A live provider health badge in the header — shows which engine is active and its current latency, and doubles as a shortcut into the settings panel when clicked.
+
+**Chat and sessions**
+- Multiple independent, persisted chat sessions — create, inline-rename (double-click the title), and delete, each keeping its own history.
+- Background streaming across sessions: switch away from a session mid-answer and generation keeps running behind the scenes; a toast tells you when it's done instead of the response getting lost.
+- Paste-to-index: paste more than 150 characters of text straight into the chat box and it's silently saved and indexed as a document — no separate upload step for a quick block of text.
+- A citation drawer that opens on click and shows the exact retrieved chunk text, its similarity score, page or chunk number, and when it was indexed — the receipt behind every numbered source badge.
+- A populated first-run state instead of a blank input box: a capability summary, a short walkthrough, and clickable suggested questions.
+- Toast notifications for everything that happens off-screen — a session finishing in the background, a note getting pinned, a mindmap finishing generation.
+
+**Document management**
+- Drag-and-drop or browse upload, with per-file live status (processing, indexed, failed) and per-document size and chunk-count stats.
+- A one-click chunk preview modal per document — see exactly what got parsed and embedded before trusting an answer that cites it.
+- Static seed documents are visually distinguished and locked against accidental deletion, versus user-uploaded files which aren't.
+- Upload limits (10 documents, 3MB per file) enforced client-side before a request even reaches the backend, so the failure is immediate and clear rather than a round-trip away.
+
+**Visual tools**
+- Mindmap Studio — generates a visual concept tree from an answer's sources, rendered as a hand-built zoomable SVG with hover tooltips per branch, and a one-click export to a self-contained HTML file you can open outside the app.
+- A Pin Board (scratchpad) — pin any answer for later, then export the whole board as one Markdown file in a click.
+
+**Observability and admin**
+- An Observability tab reading the same structured metrics — latency, tokens in/out, chunks retrieved, top similarity score, which provider answered — that get written to the database on every single turn, live rather than via a log tail.
+- An Admin & Features panel with runtime feature flags (mindmap, rate limiting, scratchpad export, paste-to-upload) next to a live audit log of recent chat activity.
+
+**Interface details**
+- Full dark mode, one toggle, consistent across every tab rather than styled per-page.
+- A header status dot that distinguishes "server process is up" from "server is up but the Gemini key isn't configured" — a distinction a generic green dot would hide.
+- A dedicated landing page as the app's entry point, separate from the workspace, with its own feature summary rather than dropping straight into a chat box.
+- A frontend TypeScript client generated from the backend's live OpenAPI schema, so a backend field rename breaks the build instead of failing silently at runtime — invisible to a user, but part of why the UI can be trusted to actually match what the API returns.
+
 ## Quick setup
 
 ```bash
