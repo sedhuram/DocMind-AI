@@ -14,11 +14,13 @@ const TABS: { id: TabId; label: string; icon: typeof MessageSquare }[] = [
 
 export function TabShell({
   statusDot,
+  providerSwitcher,
   chat,
   documents,
   observability,
 }: {
   statusDot: ReactNode;
+  providerSwitcher: ReactNode;
   chat: ReactNode;
   documents: ReactNode;
   observability: ReactNode;
@@ -34,6 +36,7 @@ export function TabShell({
           <span className="text-lg font-semibold">DocMind AI</span>
           {statusDot}
         </div>
+        <div className="flex flex-1 justify-center">{providerSwitcher}</div>
         <nav className="flex gap-1">
           {TABS.map(({ id, label, icon: Icon }) => (
             <button
