@@ -1,0 +1,41 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-gemini-embedding-001}
+      - EMBEDDING_DIMENSIONS=${EMBEDDING_DIMENSIONS:-768}
+      - GENERATION_MODEL=${GENERATION_MODEL:-gemini-3.6-flash}
+      - CHUNK_SIZE=${CHUNK_SIZE:-1000}
+      - CHUNK_OVERLAP=${CHUNK_OVERLAP:-150}
+      - RETRIEVAL_TOP_K=${RETRIEVAL_TOP_K:-5}
+      - CONTEXT_CHAR_BUDGET=${CONTEXT_CHAR_BUDGET:-6000}
+      - LOW_CONFIDENCE_THRESHOLD=${LOW_CONFIDENCE_THRESHOLD:-0.3}
+      - CONVERSATION_WINDOW_TURNS=${CONVERSATION_WINDOW_TURNS:-4}
+      - MAX_UPLOAD_SIZE_MB=${MAX_UPLOAD_SIZE_MB:-20}
+      - SQLITE_PATH=/app/sqlite/docmind.db
+    volumes:
+      - ./backend/data/static:/app/data/static
+      - ./backend/data/uploads:/app/data/uploads
+      - ./backend/vector_db:/app/vector_db
+      - backend_sqlite:/app/sqlite
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  backend_sqlite:
