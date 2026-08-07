@@ -31,6 +31,7 @@ export function SettingsModal() {
   const [activeTab, setActiveTab] = useState<"llm" | "rag" | "admin" | "roadmap">("llm");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [userRole, setUserRole] = useState<string>("admin");
 
   // Admin authentication state
   const [adminPasscode, setAdminPasscode] = useState("");
@@ -57,6 +58,21 @@ export function SettingsModal() {
   const loadConfig = async () => {
     setLoading(true);
     try {
+      const savedUser = localStorage.getItem("docmind_user");
+      if (savedUser) {
+        try {
+          const u = JSON.parse(savedUser);
+          setUserRole(u.role || "user");
+          if (u.role !== "admin" && activeTab === "admin") {
+            setActiveTab("llm");
+          }
+        } catch {
+          setUserRole("admin");
+        }
+      } else {
+        setUserRole("admin");
+      }
+
       const cfg = await apiClient.getFullConfig();
       setProvider(cfg.active_llm_provider as any);
       setGenerationModel(cfg.generation_model);
@@ -183,17 +199,19 @@ export function SettingsModal() {
             <Sliders size={13} />
             RAG Vector Engine
           </button>
-          <button
-            onClick={() => setActiveTab("admin")}
-            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold border-b-2 transition-all whitespace-nowrap ${
-              activeTab === "admin"
-                ? "border-[var(--accent)] text-[var(--accent)]"
-                : "border-transparent text-[var(--foreground)]/50 hover:text-[var(--foreground)]"
-            }`}
-          >
-            <ShieldCheck size={13} className="text-emerald-500" />
-            Admin & Features
-          </button>
+          {userRole === "admin" && (
+            <button
+              onClick={() => setActiveTab("admin")}
+              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold border-b-2 transition-all whitespace-nowrap ${
+                activeTab === "admin"
+                  ? "border-[var(--accent)] text-[var(--accent)]"
+                  : "border-transparent text-[var(--foreground)]/50 hover:text-[var(--foreground)]"
+              }`}
+            >
+              <ShieldCheck size={13} className="text-emerald-500" />
+              Admin & Features
+            </button>
+          )}
           <button
             onClick={() => setActiveTab("roadmap")}
             className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold border-b-2 transition-all whitespace-nowrap ${

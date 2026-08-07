@@ -103,15 +103,15 @@ export function GoogleSignInBadge() {
               </button>
 
               <button
-                onClick={() => handleSignIn("interviewer@panel.com", "Interview Panel Reviewer")}
+                onClick={() => handleSignIn("guest@docmind.ai", "Guest User")}
                 disabled={loading}
                 className="w-full p-2.5 rounded-lg border border-[var(--border)] bg-[var(--background)] hover:border-[var(--accent)]/40 flex items-center justify-between text-xs font-bold transition-all text-[var(--foreground)]"
               >
                 <div className="flex items-center gap-2">
                   <UserCheck size={16} className="text-emerald-500" />
-                  <span>Sign in as Interviewer (interviewer@panel.com)</span>
+                  <span>Sign in as Guest User (guest@docmind.ai)</span>
                 </div>
-                <span className="text-[10px] uppercase font-mono text-[var(--foreground)]/50">USER</span>
+                <span className="text-[10px] uppercase font-mono text-[var(--foreground)]/50">GUEST</span>
               </button>
             </div>
 
