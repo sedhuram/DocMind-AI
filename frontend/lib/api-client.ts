@@ -20,9 +20,7 @@ export type ChunkOut = Concrete<Schemas["ChunkOut"]>;
 
 export type HealthOut = Concrete<Schemas["HealthOut"]>;
 
-export type ObservabilityRow = Concrete<Schemas["ObservabilityRow"]> & {
-  provider: string | null;
-};
+export type ObservabilityRow = Concrete<Schemas["ObservabilityRow"]>;
 
 export type MessageStatus = "ok" | "low_confidence" | "error";
 
@@ -58,11 +56,39 @@ export interface ChatDoneEvent {
   provider: string;
 }
 
+/**
+ * Thrown for any non-2xx response. `message` keeps the full `status statusText: body`
+ * form it always had (useful in a console, and every existing caller already renders it),
+ * while `detail` carries just the string FastAPI put in `HTTPException(detail=...)` —
+ * so a UI can show that sentence on its own instead of raw JSON braces. `detail` is
+ * undefined when the body isn't JSON or when `detail` isn't a plain string (FastAPI's
+ * 422 validation errors put an array there, which is for developers, not users).
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly detail?: string;
+
+  constructor(status: number, statusText: string, body: string) {
+    super(`${status} ${statusText}: ${body}`);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = parseDetail(body);
+  }
+}
+
+function parseDetail(body: string): string | undefined {
+  try {
+    const parsed = JSON.parse(body);
+    return typeof parsed?.detail === "string" ? parsed.detail : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, init);
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`${response.status} ${response.statusText}: ${detail}`);
+    throw new ApiError(response.status, response.statusText, await response.text());
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;

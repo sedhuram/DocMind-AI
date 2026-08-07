@@ -295,6 +295,8 @@ export interface components {
             top_score?: number | null;
             /** Status */
             status: string;
+            /** Provider */
+            provider?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -308,7 +310,7 @@ export interface components {
             /** Label */
             label: string;
             /** Reachable */
-            reachable: boolean;
+            reachable: boolean | null;
         };
         /** SettingsOut */
         SettingsOut: {
@@ -319,8 +321,11 @@ export interface components {
         };
         /** SettingsUpdate */
         SettingsUpdate: {
-            /** Llm Provider */
-            llm_provider: string;
+            /**
+             * Llm Provider
+             * @enum {string}
+             */
+            llm_provider: "gemini" | "ollama";
         };
         /** ValidationError */
         ValidationError: {
