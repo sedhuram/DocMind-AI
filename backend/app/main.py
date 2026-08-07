@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import chat, documents, health, observability
+from app.api import auth, chat, documents, health, observability
 from app.api import settings as settings_router
 from app.core.config import settings
 from app.core.logging import configure_logging
@@ -39,7 +39,10 @@ app = FastAPI(title="DocMind AI", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -49,3 +52,5 @@ app.include_router(documents.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
 app.include_router(observability.router, prefix="/api")
 app.include_router(settings_router.router, prefix="/api")
+app.include_router(auth.router, prefix="/api")
+
