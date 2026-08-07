@@ -40,4 +40,5 @@ class ChatMessage(Base):
     chunks_retrieved: Mapped[int | None] = mapped_column(Integer, nullable=True)
     top_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String, default="ok")
+    provider: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

@@ -39,6 +39,26 @@ def test_chat_message_round_trip():
     assert fetched.citations is None
 
 
+def test_chat_message_provider_round_trip():
+    db = _memory_session()
+    msg = ChatMessage(id="msg-2", role="assistant", content="hi", status="ok", provider="ollama")
+    db.add(msg)
+    db.commit()
+
+    fetched = db.query(ChatMessage).filter_by(id="msg-2").one()
+    assert fetched.provider == "ollama"
+
+
+def test_chat_message_provider_defaults_to_none():
+    db = _memory_session()
+    msg = ChatMessage(id="msg-3", role="user", content="hi", status="ok")
+    db.add(msg)
+    db.commit()
+
+    fetched = db.query(ChatMessage).filter_by(id="msg-3").one()
+    assert fetched.provider is None
+
+
 def test_document_out_from_orm_round_trip():
     db = _memory_session()
     doc = Document(
