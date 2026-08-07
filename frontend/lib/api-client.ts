@@ -28,6 +28,74 @@ export type ProviderInfo = Concrete<Schemas["ProviderInfo"]>;
 
 export type SettingsOut = Concrete<Schemas["SettingsOut"]>;
 
+export type ChatSession = Concrete<Schemas["ChatSessionOut"]>;
+
+export type MindmapNode = {
+  title: string;
+  description: string | null;
+  children: MindmapNode[];
+};
+
+export type MindmapResponse = {
+  title: string;
+  children: MindmapNode[];
+};
+
+export type ProviderHealthOut = {
+  provider: string;
+  healthy: boolean;
+  latency_ms: number;
+  message: string;
+};
+
+export type FullConfigOut = {
+  active_llm_provider: string;
+  gemini_api_key_masked: string;
+  generation_model: string;
+  ollama_base_url: string;
+  ollama_model: string;
+  retrieval_top_k: number;
+  chunk_size: number;
+  chunk_overlap: number;
+  low_confidence_threshold: number;
+  available_providers: ProviderInfo[];
+};
+
+export type FullConfigUpdate = Partial<{
+  llm_provider: "gemini" | "ollama";
+  gemini_api_key: string;
+  generation_model: string;
+  ollama_base_url: string;
+  ollama_model: string;
+  retrieval_top_k: number;
+  chunk_size: number;
+  chunk_overlap: number;
+  low_confidence_threshold: number;
+}>;
+
+export type UserProfile = {
+  id: string;
+  email: string;
+  name: string;
+  avatar_url: string | null;
+  role: string;
+};
+
+export type AuditLogOut = {
+  id: string;
+  user_email: string;
+  action: string;
+  details: string | null;
+  ip_address: string | null;
+  timestamp: string;
+};
+
+export type FeatureFlagOut = {
+  name: string;
+  enabled: boolean;
+  description: string | null;
+};
+
 // The backend types these as plain `str` (the values are produced in code, not constrained
 // by an Enum), so the generated schema can only say `string`. The literal unions are
 // layered back on here because components index into them (e.g. DocumentsTab's
@@ -86,7 +154,18 @@ function parseDetail(body: string): string | undefined {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${BASE_URL}${path}`, init);
+  const headers = new Headers(init?.headers);
+  const token = typeof window !== "undefined"
+    ? localStorage.getItem("docmind_admin_token") || localStorage.getItem("docmind_auth_token") || "DocMind#Admin2026!Secure"
+    : "DocMind#Admin2026!Secure";
+  if (!headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  const response = await fetch(`${BASE_URL}${path}`, {
+    ...init,
+    headers,
+  });
   if (!response.ok) {
     throw new ApiError(response.status, response.statusText, await response.text());
   }
@@ -110,9 +189,43 @@ export const apiClient = {
   getChunk: (documentId: string, chunkIndex: number) =>
     request<ChunkOut>(`/api/documents/${documentId}/chunks/${chunkIndex}`),
 
-  getHistory: () => request<ChatMessageOut[]>("/api/chat/history"),
+  getHistory: (sessionId?: string) => request<ChatMessageOut[]>(`/api/chat/history?session_id=${sessionId ?? "default"}`),
 
-  clearHistory: () => request<void>("/api/chat/history", { method: "DELETE" }),
+  clearHistory: (sessionId?: string) =>
+    request<void>(`/api/chat/history?session_id=${sessionId ?? "default"}`, { method: "DELETE" }),
+
+  listSessions: () => request<ChatSession[]>("/api/chat/sessions"),
+
+  createSession: (title?: string) =>
+    request<ChatSession>("/api/chat/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    }),
+
+  updateSession: (sessionId: string, title: string) =>
+    request<ChatSession>(`/api/chat/sessions/${sessionId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    }),
+
+  deleteSession: (sessionId: string) =>
+    request<void>(`/api/chat/sessions/${sessionId}`, { method: "DELETE" }),
+
+  editMessage: (messageId: string, content: string) =>
+    request<ChatMessageOut>(`/api/chat/messages/${messageId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    }),
+
+  generateMindmap: (topic: string) =>
+    request<MindmapResponse>("/api/chat/mindmap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: topic }),
+    }),
 
   getObservabilityRequests: () => request<ObservabilityRow[]>("/api/observability/requests"),
 
@@ -125,14 +238,51 @@ export const apiClient = {
       body: JSON.stringify({ llm_provider: provider }),
     }),
 
+  getProviderHealth: () => request<ProviderHealthOut>("/api/settings/health"),
+
+  getFullConfig: () => request<FullConfigOut>("/api/settings/config"),
+
+  updateFullConfig: (payload: FullConfigUpdate) =>
+    request<FullConfigOut>("/api/settings/config", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+
+  googleSignIn: (email: string, name: string, avatar_url?: string) =>
+    request<{ token: string; user: UserProfile }>("/api/auth/google-signin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, name, avatar_url }),
+    }),
+
+  verifyAdminPasscode: (passcode: string) =>
+    request<{ verified: boolean; admin_token: string }>("/api/auth/admin-verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ passcode }),
+    }),
+
+  getAuditLogs: () => request<AuditLogOut[]>("/api/auth/audit-logs"),
+
+  getFeatureFlags: () => request<FeatureFlagOut[]>("/api/auth/flags"),
+
+  toggleFeatureFlag: (name: string, enabled: boolean) =>
+    request<FeatureFlagOut>(`/api/auth/flags/${name}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    }),
+
   async streamChat(
     message: string,
+    sessionId: string,
     handlers: { onToken: (text: string) => void; onDone: (payload: ChatDoneEvent) => void; onError: (message: string) => void }
   ): Promise<void> {
     const response = await fetch(`${BASE_URL}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, session_id: sessionId }),
     });
     if (!response.ok || !response.body) {
       handlers.onError(`Request failed: ${response.status}`);

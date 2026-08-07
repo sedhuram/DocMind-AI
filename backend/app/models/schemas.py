@@ -9,6 +9,25 @@ class Citation(BaseModel):
     chunk_index: int
     page_number: int | None = None
     score: float
+    source_name: str | None = None
+    chunk_id: str | None = None
+    upload_timestamp: str | None = None
+
+
+class ChatSessionOut(BaseModel):
+    id: str
+    title: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ChatSessionCreate(BaseModel):
+    title: str | None = None
+
+
+class ChatSessionUpdate(BaseModel):
+    title: str
 
 
 class DocumentOut(BaseModel):
@@ -27,10 +46,12 @@ class DocumentOut(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    session_id: str = "default"
 
 
 class ChatMessageOut(BaseModel):
     id: str
+    session_id: str
     role: str
     content: str
     citations: list[Citation] = []
@@ -71,3 +92,21 @@ class HealthOut(BaseModel):
     chroma_document_count: int
     sqlite_ok: bool
     uptime_seconds: int
+
+
+class MessageEditRequest(BaseModel):
+    content: str
+
+
+class MindmapNode(BaseModel):
+    title: str
+    description: str | None = None
+    children: list["MindmapNode"] = []
+
+
+class MindmapResponse(BaseModel):
+    title: str
+    children: list[MindmapNode] = []
+
+
+MindmapNode.model_rebuild()

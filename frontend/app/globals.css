@@ -31,3 +31,27 @@ body {
   background: var(--background);
   color: var(--foreground);
 }
+
+.prose {
+  --tw-prose-body: var(--foreground) !important;
+  --tw-prose-headings: var(--foreground) !important;
+  --tw-prose-bold: var(--foreground) !important;
+  --tw-prose-links: var(--accent) !important;
+  --tw-prose-bullets: var(--foreground) !important;
+  --tw-prose-counters: var(--foreground) !important;
+  --tw-prose-quotes: var(--foreground) !important;
+  --tw-prose-code: var(--foreground) !important;
+  --tw-prose-th-borders: var(--border) !important;
+  --tw-prose-td-borders: var(--border) !important;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateY(0.75rem);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}

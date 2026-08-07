@@ -124,6 +124,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/chat/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Sessions */
+        get: operations["list_sessions_api_chat_sessions_get"];
+        put?: never;
+        /** Create Session */
+        post: operations["create_session_api_chat_sessions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chat/sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Session */
+        delete: operations["delete_session_api_chat_sessions__session_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Session */
+        patch: operations["update_session_api_chat_sessions__session_id__patch"];
+        trace?: never;
+    };
+    "/api/chat/messages/{message_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Edit Message */
+        put: operations["edit_message_api_chat_messages__message_id__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chat/mindmap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Generate Mindmap */
+        post: operations["generate_mindmap_api_chat_mindmap_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/observability/requests": {
         parameters: {
             query?: never;
@@ -159,10 +229,153 @@ export interface paths {
         patch: operations["update_settings_api_settings_patch"];
         trace?: never;
     };
+    "/api/settings/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Check Health */
+        get: operations["check_health_api_settings_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Full Config */
+        get: operations["get_full_config_api_settings_config_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Full Config */
+        patch: operations["update_full_config_api_settings_config_patch"];
+        trace?: never;
+    };
+    "/api/auth/google-signin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Google Signin */
+        post: operations["google_signin_api_auth_google_signin_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/admin-verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admin Verify */
+        post: operations["admin_verify_api_auth_admin_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/audit-logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Audit Logs */
+        get: operations["get_audit_logs_api_auth_audit_logs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/flags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Feature Flags */
+        get: operations["get_feature_flags_api_auth_flags_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/flags/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Toggle Feature Flag */
+        patch: operations["toggle_feature_flag_api_auth_flags__name__patch"];
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AdminVerifyRequest */
+        AdminVerifyRequest: {
+            /** Passcode */
+            passcode: string;
+        };
+        /** AuditLogOut */
+        AuditLogOut: {
+            /** Id */
+            id: string;
+            /** User Email */
+            user_email: string;
+            /** Action */
+            action: string;
+            /** Details */
+            details?: string | null;
+            /** Ip Address */
+            ip_address?: string | null;
+            /**
+             * Timestamp
+             * Format: date-time
+             */
+            timestamp: string;
+        };
         /** Body_upload_document_api_documents_upload_post */
         Body_upload_document_api_documents_upload_post: {
             /**
@@ -175,6 +388,8 @@ export interface components {
         ChatMessageOut: {
             /** Id */
             id: string;
+            /** Session Id */
+            session_id: string;
             /** Role */
             role: string;
             /** Content */
@@ -208,6 +423,33 @@ export interface components {
         ChatRequest: {
             /** Message */
             message: string;
+            /**
+             * Session Id
+             * @default default
+             */
+            session_id: string;
+        };
+        /** ChatSessionCreate */
+        ChatSessionCreate: {
+            /** Title */
+            title?: string | null;
+        };
+        /** ChatSessionOut */
+        ChatSessionOut: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** ChatSessionUpdate */
+        ChatSessionUpdate: {
+            /** Title */
+            title: string;
         };
         /** ChunkOut */
         ChunkOut: {
@@ -234,6 +476,12 @@ export interface components {
             page_number?: number | null;
             /** Score */
             score: number;
+            /** Source Name */
+            source_name?: string | null;
+            /** Chunk Id */
+            chunk_id?: string | null;
+            /** Upload Timestamp */
+            upload_timestamp?: string | null;
         };
         /** DocumentOut */
         DocumentOut: {
@@ -259,6 +507,73 @@ export interface components {
             /** Indexed At */
             indexed_at?: string | null;
         };
+        /** FeatureFlagOut */
+        FeatureFlagOut: {
+            /** Name */
+            name: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Description */
+            description?: string | null;
+        };
+        /** FeatureFlagUpdate */
+        FeatureFlagUpdate: {
+            /** Enabled */
+            enabled: boolean;
+        };
+        /** FullConfigOut */
+        FullConfigOut: {
+            /** Active Llm Provider */
+            active_llm_provider: string;
+            /** Gemini Api Key Masked */
+            gemini_api_key_masked: string;
+            /** Generation Model */
+            generation_model: string;
+            /** Ollama Base Url */
+            ollama_base_url: string;
+            /** Ollama Model */
+            ollama_model: string;
+            /** Retrieval Top K */
+            retrieval_top_k: number;
+            /** Chunk Size */
+            chunk_size: number;
+            /** Chunk Overlap */
+            chunk_overlap: number;
+            /** Low Confidence Threshold */
+            low_confidence_threshold: number;
+            /** Available Providers */
+            available_providers: components["schemas"]["ProviderInfo"][];
+        };
+        /** FullConfigUpdate */
+        FullConfigUpdate: {
+            /** Llm Provider */
+            llm_provider?: ("gemini" | "ollama") | null;
+            /** Gemini Api Key */
+            gemini_api_key?: string | null;
+            /** Generation Model */
+            generation_model?: string | null;
+            /** Ollama Base Url */
+            ollama_base_url?: string | null;
+            /** Ollama Model */
+            ollama_model?: string | null;
+            /** Retrieval Top K */
+            retrieval_top_k?: number | null;
+            /** Chunk Size */
+            chunk_size?: number | null;
+            /** Chunk Overlap */
+            chunk_overlap?: number | null;
+            /** Low Confidence Threshold */
+            low_confidence_threshold?: number | null;
+        };
+        /** GoogleSignInRequest */
+        GoogleSignInRequest: {
+            /** Email */
+            email: string;
+            /** Name */
+            name: string;
+            /** Avatar Url */
+            avatar_url?: string | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -276,6 +591,33 @@ export interface components {
             sqlite_ok: boolean;
             /** Uptime Seconds */
             uptime_seconds: number;
+        };
+        /** MessageEditRequest */
+        MessageEditRequest: {
+            /** Content */
+            content: string;
+        };
+        /** MindmapNode */
+        MindmapNode: {
+            /** Title */
+            title: string;
+            /** Description */
+            description?: string | null;
+            /**
+             * Children
+             * @default []
+             */
+            children: components["schemas"]["MindmapNode"][];
+        };
+        /** MindmapResponse */
+        MindmapResponse: {
+            /** Title */
+            title: string;
+            /**
+             * Children
+             * @default []
+             */
+            children: components["schemas"]["MindmapNode"][];
         };
         /** ObservabilityRow */
         ObservabilityRow: {
@@ -302,6 +644,17 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+        };
+        /** ProviderHealthOut */
+        ProviderHealthOut: {
+            /** Provider */
+            provider: string;
+            /** Healthy */
+            healthy: boolean;
+            /** Latency Ms */
+            latency_ms: number;
+            /** Message */
+            message: string;
         };
         /** ProviderInfo */
         ProviderInfo: {
@@ -514,7 +867,9 @@ export interface operations {
     };
     get_history_api_chat_history_get: {
         parameters: {
-            query?: never;
+            query?: {
+                session_id?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -530,11 +885,22 @@ export interface operations {
                     "application/json": components["schemas"]["ChatMessageOut"][];
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     clear_history_api_chat_history_delete: {
         parameters: {
-            query?: never;
+            query?: {
+                session_id?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -547,6 +913,200 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_sessions_api_chat_sessions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSessionOut"][];
+                };
+            };
+        };
+    };
+    create_session_api_chat_sessions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatSessionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSessionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_session_api_chat_sessions__session_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_session_api_chat_sessions__session_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatSessionUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSessionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_message_api_chat_messages__message_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MessageEditRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatMessageOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    generate_mindmap_api_chat_mindmap_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MessageEditRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MindmapResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
         };
     };
@@ -621,6 +1181,233 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SettingsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_health_api_settings_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderHealthOut"];
+                };
+            };
+        };
+    };
+    get_full_config_api_settings_config_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FullConfigOut"];
+                };
+            };
+        };
+    };
+    update_full_config_api_settings_config_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FullConfigUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FullConfigOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    google_signin_api_auth_google_signin_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GoogleSignInRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    admin_verify_api_auth_admin_verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminVerifyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_audit_logs_api_auth_audit_logs_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditLogOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_feature_flags_api_auth_flags_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeatureFlagOut"][];
+                };
+            };
+        };
+    };
+    toggle_feature_flag_api_auth_flags__name__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FeatureFlagUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeatureFlagOut"];
                 };
             };
             /** @description Validation Error */

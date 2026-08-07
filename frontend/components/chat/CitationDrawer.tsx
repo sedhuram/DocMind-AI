@@ -41,7 +41,20 @@ export function CitationDrawer({ citation, onClose }: { citation: Citation; onCl
       </div>
       {error && <p className="text-sm text-red-500">{error}</p>}
       {!error && text === null && <p className="text-sm text-[var(--foreground)]/60">Loading...</p>}
-      {text && <p className="whitespace-pre-wrap text-sm leading-relaxed">{text}</p>}
+      {text && (
+        <div className="flex flex-col h-[calc(100%-60px)] justify-between">
+          <div className="overflow-y-auto flex-1 pr-1">
+            <p className="whitespace-pre-wrap text-sm leading-relaxed text-[var(--foreground)]/80">{text}</p>
+          </div>
+          <div className="mt-4 pt-3 border-t border-[var(--border)] text-[10px] text-[var(--foreground)]/50 space-y-1 bg-[var(--surface)] shrink-0">
+            <p><span className="font-bold text-[var(--foreground)]/70">Source:</span> {citation.source_name || citation.filename}</p>
+            <p><span className="font-bold text-[var(--foreground)]/70">Chunk ID:</span> {citation.chunk_id || `${citation.document_id}_${citation.chunk_index}`}</p>
+            {citation.upload_timestamp && (
+              <p><span className="font-bold text-[var(--foreground)]/70">Indexed At:</span> {new Date(citation.upload_timestamp).toLocaleString()}</p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

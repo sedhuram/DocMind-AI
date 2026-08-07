@@ -167,10 +167,12 @@ def test_chat_done_event_carries_full_citation_payload(mock_retrieve, mock_strea
         {
             "document_id": "doc-1", "filename": "handbook.pdf",
             "chunk_index": 3, "page_number": 5, "score": 0.8123,
+            "source_name": None, "chunk_id": None, "upload_timestamp": None,
         },
         {
             "document_id": "doc-2", "filename": "notes.txt",
             "chunk_index": 0, "page_number": None, "score": 0.4211,
+            "source_name": None, "chunk_id": None, "upload_timestamp": None,
         },
     ]
 
@@ -193,10 +195,12 @@ def test_chat_history_round_trips_citations_through_json_column(mock_retrieve, m
     assert citations[0] == {
         "document_id": "doc-1", "filename": "handbook.pdf",
         "chunk_index": 3, "page_number": 5, "score": 0.8123,
+        "source_name": None, "chunk_id": None, "upload_timestamp": None,
     }
     assert citations[1] == {
         "document_id": "doc-2", "filename": "notes.txt",
         "chunk_index": 0, "page_number": None, "score": 0.4211,
+        "source_name": None, "chunk_id": None, "upload_timestamp": None,
     }
     assert citations[1]["page_number"] is None
 

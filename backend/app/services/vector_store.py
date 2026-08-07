@@ -1,3 +1,4 @@
+import datetime
 from dataclasses import dataclass
 
 import chromadb
@@ -14,6 +15,9 @@ class RetrievedChunk:
     page_number: int | None
     text: str
     score: float
+    source_name: str | None = None
+    chunk_id: str | None = None
+    upload_timestamp: str | None = None
 
 
 class VectorStore:
@@ -36,6 +40,7 @@ class VectorStore:
         if not chunks:
             return
         ids = [f"{document_id}_{i}" for i in range(len(chunks))]
+        upload_time = datetime.datetime.now(datetime.timezone.utc).isoformat()
         metadatas = [
             {
                 "document_id": document_id,
@@ -43,6 +48,9 @@ class VectorStore:
                 "source_type": source_type,
                 "chunk_index": i,
                 "page_number": page_numbers[i] if page_numbers[i] is not None else _PAGE_NUMBER_NONE_SENTINEL,
+                "source_name": filename,
+                "chunk_id": f"{document_id}_{i}",
+                "upload_timestamp": upload_time,
             }
             for i in range(len(chunks))
         ]
@@ -83,4 +91,7 @@ class VectorStore:
             page_number=None if page_number == _PAGE_NUMBER_NONE_SENTINEL else page_number,
             text=document,
             score=(1 - distance) if distance is not None else 1.0,
+            source_name=metadata.get("source_name", metadata["filename"]),
+            chunk_id=metadata.get("chunk_id", f"{metadata['document_id']}_{metadata['chunk_index']}"),
+            upload_timestamp=metadata.get("upload_timestamp"),
         )
