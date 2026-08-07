@@ -20,9 +20,15 @@ export type ChunkOut = Concrete<Schemas["ChunkOut"]>;
 
 export type HealthOut = Concrete<Schemas["HealthOut"]>;
 
-export type ObservabilityRow = Concrete<Schemas["ObservabilityRow"]>;
+export type ObservabilityRow = Concrete<Schemas["ObservabilityRow"]> & {
+  provider: string | null;
+};
 
 export type MessageStatus = "ok" | "low_confidence" | "error";
+
+export type ProviderInfo = Concrete<Schemas["ProviderInfo"]>;
+
+export type SettingsOut = Concrete<Schemas["SettingsOut"]>;
 
 // The backend types these as plain `str` (the values are produced in code, not constrained
 // by an Enum), so the generated schema can only say `string`. The literal unions are
@@ -49,6 +55,7 @@ export interface ChatDoneEvent {
   chunks_retrieved: number;
   top_score: number;
   status: MessageStatus;
+  provider: string;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -82,6 +89,15 @@ export const apiClient = {
   clearHistory: () => request<void>("/api/chat/history", { method: "DELETE" }),
 
   getObservabilityRequests: () => request<ObservabilityRow[]>("/api/observability/requests"),
+
+  getSettings: () => request<SettingsOut>("/api/settings"),
+
+  updateSettings: (provider: string) =>
+    request<SettingsOut>("/api/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ llm_provider: provider }),
+    }),
 
   async streamChat(
     message: string,
