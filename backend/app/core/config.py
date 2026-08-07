@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -10,7 +11,11 @@ class Settings(BaseSettings):
     embedding_model: str = "gemini-embedding-001"
     embedding_dimensions: int = 768
     generation_model: str = "gemini-3.6-flash"
-    default_llm_provider: str = "gemini"
+    # Literal, not str: a typo'd DEFAULT_LLM_PROVIDER would otherwise sail through
+    # startup, fall through chat.py's `== "ollama"` check to Gemini, and get recorded
+    # verbatim as the `provider` on every persisted turn. Failing at import time is the
+    # cheaper outcome.
+    default_llm_provider: Literal["gemini", "ollama"] = "gemini"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen3.6:35b"
     chunk_size: int = 1000
