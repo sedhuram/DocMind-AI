@@ -1,8 +1,10 @@
 # DocMind AI
 
-A RAG assistant that answers questions from a document collection, with visible citations back to the exact chunk they came from. Built for a "Chat With Your Docs" take-home — Python/FastAPI backend, Next.js frontend, Gemini for embeddings and generation, everything else running locally.
+A RAG assistant that answers questions over a document collection, with citations back to the exact chunk an answer came from. Built for the "Chat With Your Docs" option of this take-home. Python/FastAPI backend, Next.js frontend, Gemini for embeddings and generation, ChromaDB and SQLite running locally alongside the app.
 
-This README is written the way I'd write a PR description for a senior engineer reviewing this: what I built, why, what I cut, and where I'd push back on my own decisions if I had more time.
+[![Watch the demo](https://img.youtube.com/vi/1JOeYYavYQA/maxresdefault.jpg)](https://youtu.be/1JOeYYavYQA)
+
+This document covers what I built, the reasoning behind the RAG-specific choices, what I left out on purpose, and — since a few things below don't hold up to full scrutiny — where the honest state of the code is weaker than the feature list makes it sound.
 
 ## Quick setup
 
@@ -10,220 +12,189 @@ This README is written the way I'd write a PR description for a senior engineer 
 git clone <this-repo>
 cd docmind-ai
 cp .env.example .env
-# edit .env, set GEMINI_API_KEY to a real key from https://aistudio.google.com/apikey
-# optional: DEFAULT_LLM_PROVIDER (gemini|ollama, defaults to gemini), OLLAMA_MODEL
-# (defaults to qwen3.6:35b), OLLAMA_BASE_URL — only needed if you want to boot with
-# Ollama pre-selected or point at a non-default install; the provider is also
-# switchable at runtime from the UI without touching .env at all
+# set GEMINI_API_KEY in .env — get one at https://aistudio.google.com/apikey
 docker compose up --build
 ```
 
-**If you're using Ollama, read this before setting `OLLAMA_BASE_URL`.** Running the backend directly on your machine, Ollama is at `http://localhost:11434`. Under `docker compose up` that value is *wrong*: `localhost` inside the backend container resolves to the container, not to your machine, so a host-installed Ollama is unreachable at that address. Compose therefore defaults `OLLAMA_BASE_URL` to `http://host.docker.internal:11434` (with an `extra_hosts: host.docker.internal:host-gateway` mapping so the name also resolves on Linux hosts). `.env.example` ships the `OLLAMA_BASE_URL` line commented out for exactly this reason — leave it commented for the Docker case, and only uncomment it (to the direct-run value or something else) if you're running the backend outside Docker. There's a second, separate gotcha even with the host reachable by name: Ollama binds `127.0.0.1` only by default, which refuses connections arriving over Docker's bridge network regardless of what hostname resolves to it — if you're on the Docker path, start Ollama with `OLLAMA_HOST=0.0.0.0 ollama serve` on the host first. Honest caveat: the Docker→host-Ollama path (both of the above) is a careful static trace, not a verified run — Docker isn't installed in the environment this was built in (see the provenance note below). The Ollama provider itself *was* verified for real, against a locally-run backend and a live `qwen3.6:35b`.
-
-**Docker build status, update:** the two Dockerfiles and `docker-compose.yml` below have since been build-verified for real — `docker compose up --build` produces a healthy backend and a responding frontend, confirmed via the backend's own healthcheck and a live `curl` against both `/api/health` and `:3000`. That verification pass also caught a real bug: `openpyxl` (used by the CSV/XLSX parser added later) was missing from `backend/requirements.txt` — it only worked outside Docker because a local dev virtualenv happened to have it installed already from an earlier `pip install`. Fixed by pinning it in `requirements.txt`. The "static trace, not a verified run" caveat below, and the "Docker itself: not build-verified" line further down, describe the state before this pass and are kept for narrative accuracy but no longer reflect current status.
-
-**Upgrading an existing checkout?** This version added a `provider` column to `chat_messages`, and there's no migration framework (see "No Alembic migrations" below). An older database will hard-fail on the first history read with `no such column: chat_messages.provider`. Delete it first: `rm backend/data/docmind.db` for local dev, or `docker compose down -v` for Docker (the `-v` matters — it's a *named* volume, so a plain `down`/`--build` leaves it in place). Fresh clones are unaffected.
-
-- Backend: `http://localhost:8000` (docs at `/docs`)
+- Backend: `http://localhost:8000` (Swagger docs at `/docs`)
 - Frontend: `http://localhost:3000`
 
-On first boot, the backend scans `backend/data/static/` and indexes whatever's there (two seed docs about DocMind AI itself are included, so there's something to query immediately). Drop more files into that directory and restart, or just drag-and-drop into the Documents tab.
+On first boot the backend indexes whatever's in `backend/data/static/` (two seed docs about the app itself are included, so there's something to query right away). Drop more files there and restart, or upload through the Documents tab.
 
-**Note on this repo's provenance:** I couldn't run Docker in the sandboxed environment I built this in, so the two Dockerfiles and `docker-compose.yml` are correct by careful static trace (port mappings, volume paths, layer ordering, build-arg wiring — all checked by hand against the actual app code) but not build-verified. Everything else — the full RAG pipeline, all 90 backend tests, both frontend dev servers — I verified for real, including one live end-to-end run against the actual Gemini API (see "What I actually verified" below). Run `docker compose up --build` locally before you trust the container path; I'd bet on it working, but "static trace" and "I watched it boot" are different confidence levels and I'm not going to blur that line here.
+`SETUP.md` has the fuller version of this — a local no-Docker path, a `scripts/setup.sh` that picks Docker or local automatically and waits for real health checks instead of assuming a process starting means it's ready, and a troubleshooting table for the gotchas below.
+
+Two things worth knowing before you run it:
+
+- **Ollama and Docker networking.** If you want to run generation against a local Ollama instead of Gemini, `localhost` inside the backend container does not mean your host machine — it means the container. Compose already points `OLLAMA_BASE_URL` at `http://host.docker.internal:11434` for this reason, and Ollama needs to be started with `OLLAMA_HOST=0.0.0.0 ollama serve` so it accepts connections from the Docker bridge network at all. None of this is needed for the default Gemini-only path.
+- **Upgrading an old checkout.** Schema changes are applied by dropping and recreating the local database rather than through a migration tool (more on that decision below). If you have a database from an earlier version of this repo, delete it — `rm backend/data/docmind.db` locally, or `docker compose down -v` for Docker.
 
 ## Architecture
 
 ```
-                         ┌─────────────────────────┐
-                         │   Next.js 15 Frontend    │
-                         │  Tabs: Chat / Documents  │
-                         │  / Observability          │
-                         │  Tailwind, SSE client     │
-                         └───────────┬──────────────┘
-                                     │ REST + SSE (typed via generated
-                                     │ OpenAPI → TS client)
-                         ┌───────────▼──────────────┐
-                         │       FastAPI Backend      │
-                         │ ┌────────┐   ┌───────────┐ │
-                         │ │ api/   │   │ core/rag/ │ │
-                         │ │ chat   │   │ chunking  │ │
-                         │ │ docs   │   │ retrieval │ │
-                         │ │ health │   │ generation│ │
-                         │ │ observ.│   │ prompt    │ │
-                         │ └───┬────┘   └─────┬─────┘ │
-                         └─────┼──────────────┼───────┘
-                        ┌──────▼───┐    ┌─────▼─────────┐
-                        │ SQLite    │    │  ChromaDB      │
-                        │ documents │    │  persistent,   │
-                        │ chat_msgs │    │  local file mode│
-                        └───────────┘    └────────────────┘
-                                     ▲
-                          ┌──────────┴───────────┐
-                          │      Gemini API        │
-                          │ gemini-embedding-001   │
-                          │ (768-dim, normalized)  │
-                          │ gemini-3.6-flash        │
-                          │ (streaming generation) │
-                          └────────────────────────┘
+                         Next.js 15 frontend
+                    Chat (multi-session) / Documents
+                       / Observability / Admin
+                                  |
+                         REST + SSE, typed client
+                    generated from the backend's OpenAPI schema
+                                  |
+                           FastAPI backend
+                 api/chat  api/documents  api/settings
+                 api/observability  api/auth
+                 core/rag: chunking, retrieval, prompt
+                                  |
+                  -------------------------------
+                  |                              |
+              SQLite                        ChromaDB
+        documents, chat sessions        persistent, local file mode
+          and messages, users
+                                  |
+                       Gemini API (embeddings, always)
+                gemini-embedding-001, 768-dim, normalized
+                                  |
+                    Gemini (gemini-3.6-flash) or
+                 a local Ollama instance for generation,
+                 switchable at runtime via /api/settings
 ```
 
-Not shown above to keep the box art readable: generation calls can route to a local Ollama instance (`qwen3.6:35b` by default) instead of the Gemini API box, selected at runtime via `PATCH /api/settings` rather than fixed at boot — see "RAG decisions → Ollama as a second generation provider" below. Embeddings always go through Gemini regardless of which provider is active for generation.
+Everything runs as two containers. No external managed services — SQLite and Chroma are both embedded, file-based stores.
 
-Two containers, no auth, single conversation thread, single document collection. That's not a minimal-viable-cop-out — it's a deliberate read of the brief. More on that in "What I deliberately didn't build."
+## What's actually in here
 
-## What I actually verified
+The feature list grew past the original RAG core over the course of building this, and not everything grew at the same standard. Rather than let the architecture diagram imply more rigor than exists everywhere, here's a plain account of what's real and what's closer to a UI mockup wearing real endpoints.
 
-I want to be specific about this because "I tested it" means different things depending on who's saying it.
+**Solid and tested:** the RAG pipeline end to end — parsing (PDF, DOCX, TXT, MD, CSV, XLSX), chunking, embedding, retrieval, prompt assembly, streamed generation, citations, multi-turn chat with session persistence, the Observability tab, provider switching between Gemini and Ollama. This is where the 92 backend tests live, and where I did a real live run against the actual Gemini API to confirm the pipeline works end to end, not just in unit isolation.
 
-- **90 backend pytest tests**, all passing, covering chunking boundaries, PDF/DOCX/TXT/MD parsing (with real generated fixture files, not mocked text), embedding normalization, vector store cosine-similarity math, ingestion dedup, retrieval context-budget truncation, prompt assembly, generation retry/backoff logic, upload filename sanitization, citation payload round-tripping through the JSON column, and every API route with a mocked Gemini client (so the suite runs with zero network access and zero API key requirement).
-- **One real, live end-to-end run** against the actual Gemini API, not a mock: asked "What file types does DocMind AI support?" against the two seed documents, got back a real streamed answer — *"DocMind AI supports PDF, TXT, Markdown, and DOCX files [Source 1]"* — with a citation to `docmind-faq.md` at similarity score 0.7376 and a 2.9s round trip. That's the proof the retrieval → prompt → generation → citation pipeline actually works together, not just in isolation.
-- **One real, live end-to-end run against a local Ollama instance** (`qwen3.6:35b`), and a real switch back to Gemini in the same session — full detail, real numbers, and the actual citation in "RAG decisions → Ollama as a second generation provider" below.
-- **Both dev servers** (`uvicorn` and `next dev`) booted and served real pages, confirmed by curl and by reading the actual response bodies, not by assuming a command exited 0.
-- **Docker: now build-verified.** `docker compose up --build` produces a healthy backend (its own healthcheck passes) and a responding frontend, confirmed via `curl` against `/api/health` and `:3000` on the actual containers, not just static trace. That pass caught one real bug — `openpyxl` missing from `backend/requirements.txt` (see the update note near the top of this README) — now fixed.
+**Real but shallow:** the security layer added later — prompt-injection detection and PII redaction are six and three regex patterns respectively, not a model-based classifier, and PII redaction only runs on the user's message before it's stored, not on retrieved document text or on the model's output. Rate limiting is a real in-memory sliding window (10 requests/minute per IP) but it resets on restart and won't work if you ever run more than one backend process. None of this is dishonest about what it claims to be if you read the code, but it would be dishonest of me to call it a "guardrail system" without this paragraph next to it.
+
+**Cosmetic:** the admin/auth layer is the one part of this I'd redo before showing it to anyone as more than a UI sketch. "Google Sign-In" doesn't talk to Google — it's a labeled simulation modal that lets you claim any email as a demo login, and a fresh browser session defaults to being signed in as the admin account before you click anything. The admin bearer token check compares against a hardcoded string literal (`DocMind#Admin2026!Secure`) that also happens to be the fallback token the frontend sends on every request by default — so the "protected" admin endpoints are open by construction, not by a bug that slipped through. The Admin tab being hidden from non-admin users is a client-side conditional render; the backend doesn't check role at all. I'm flagging this here instead of letting it surface as a surprise, because pretending otherwise would undercut the one thing this section is trying to establish: that I know the difference between something I built to spec and something I built to look finished.
+
+Two features that are real, working, and just didn't exist when I first scoped this: multi-session chat (create, rename, delete, switch sessions, each backed by its own row in SQLite, with streaming that keeps running in the background if you switch away mid-answer), and per-session document filtering (checkbox selection in the Documents tab restricts retrieval to chosen documents via a Chroma metadata filter — genuinely applied at query time, not filtered client-side after the fact).
 
 ## RAG decisions
 
-### Chunking: `RecursiveCharacterTextSplitter`, 1000 chars, 150 overlap
+### Chunking — RecursiveCharacterTextSplitter, 1000 characters, 150 overlap
 
-I chunk per-page, not per-document — each `ParsedPage` (a PDF page, or the whole text for TXT/MD/DOCX which don't have real pages) gets split independently, and every resulting chunk inherits that page's page number. This means a chunk never straddles a page boundary, which matters for citation accuracy: when I show "page 4" on a badge, the text really is from page 4, not spliced across 3 and 4.
+Chunking happens per page, not per document — each parsed page is split independently and every chunk keeps that page's number, so a chunk never straddles a page boundary and a citation badge showing "page 4" is actually page 4. I didn't reach for AST-based chunking; that's the right tool for a code-documentation assistant, not prose. A paragraph-then-sentence-then-word separator cascade is the boring, correct choice here.
 
-I explicitly did *not* do AST-based chunking. That's the right tool for Option 2 of this assignment (code documentation), not Option 1 (document Q&A) — using it here would be reaching for a technique because it sounds sophisticated, not because it fits the problem. Recursive character splitting with a paragraph→sentence→word separator cascade is the boring, correct choice for prose.
+### Embedding — gemini-embedding-001, 768 dimensions, normalized manually
 
-### Embedding: `gemini-embedding-001`, 768 dimensions, manually normalized
+The model I'd originally have used, `text-embedding-004`, was deprecated by the time I built this, so I checked current docs rather than trust what I already knew about the API surface. The replacement supports truncatable output (3072 down to 256 dimensions via Matryoshka representation), and 768 gets close to peak retrieval quality at a quarter of the storage and compute cost of the full size — the right tradeoff for a local Chroma instance with no reason to max out vector size. One thing that would have quietly broken retrieval if I'd missed it: this model doesn't auto-normalize truncated output, so the embedding service L2-normalizes every vector before it reaches Chroma. Skip that step and cosine similarity scores stop meaning anything.
 
-This is the one place where my training knowledge was stale enough to matter, and it's worth explaining because it's the clearest example of "don't trust an AI assistant's memory of an API surface without checking." The original ask was `text-embedding-004`. I checked, and that model was deprecated and shut down on January 14, 2026 — building against it would have meant a broken app on day one, discovered only when someone actually ran it. The replacement, `gemini-embedding-001`, supports truncatable output dimensions (3072/1536/768/256 via Matryoshka representation), and Google's own guidance is that 768 gets near-peak retrieval quality at a quarter of the storage and compute cost of the full 3072. For a local Chroma instance with no reason to max out vector size, 768 was the obvious pick.
+### Generation — gemini-3.6-flash, streamed
 
-One catch that would have silently broken retrieval if I'd missed it: `gemini-embedding-001` doesn't auto-normalize truncated output the way the newer `gemini-embedding-2` does. So `embedding_service.py` L2-normalizes every vector client-side before it touches Chroma — without that, cosine similarity scores would be meaningless and the low-confidence threshold would fire (or not fire) essentially at random.
+Flash over Pro because this is a retrieval-grounded task: the model synthesizes an answer from context I've already retrieved and cites it, rather than reasoning from scratch. That's Flash's job, and Pro would just be slower for no accuracy gain I'd notice at this scale.
 
-### Generation: `gemini-3.6-flash`, streamed
+### Ollama as a second generation provider
 
-Same story — the original spec said `gemini-2.5-flash`, and by the time I was building this, `gemini-3.6-flash` had shipped (July 2026, GA). Flash over Pro because this is a retrieval-grounded task, not an open-ended reasoning task — the model's job is to synthesize an answer from provided context and cite it, not to derive novel insight. That's squarely in Flash's wheelhouse and Pro would just be slower and more expensive for no accuracy gain I'd notice in this use case.
+Every other piece of configuration in this project is set once via `.env` and fixed for the life of the process. Provider selection is the one place I broke that pattern, because the tradeoff between Gemini and Ollama is real and situational rather than one obsoleting the other: Ollama runs fully on-machine, costs nothing per token, and never sends document content over the network — at the cost of being noticeably slower. In my own testing, a comparable answer took roughly 21 seconds on a local `qwen3.6:35b` versus 3 seconds on Gemini. That's a real cost, not a footnote, so the switch belongs at request time rather than baked into deployment. `PATCH /api/settings` live-probes the target provider before accepting a switch and rejects it with a 400 if it isn't reachable, so a successful switch means the provider was actually there.
 
-### Ollama as a second generation provider, switchable at runtime
+Embeddings stay on Gemini regardless of which generation provider is active — every vector already in Chroma is a 768-dim Gemini vector, and cosine similarity between vectors from two different embedding models is meaningless. Switching that would mean re-embedding the whole store, not flipping a setting.
 
-Everything else in this project is configured through `.env` and fixed for the life of the process — that's a deliberate pattern (see "No Alembic migrations," "Single conversation thread" elsewhere in this README: fewer moving parts, less to get wrong). Runtime provider switching is the one place I broke that pattern on purpose, and it's worth explaining why.
+### Vector store — ChromaDB, persistent local mode, cosine distance
 
-The case for Ollama isn't "more options are always better" — it's three specific, real trade-offs against Gemini: it runs entirely on the machine it's installed on, with no network dependency once the model is pulled; it costs nothing per token, because no API call leaves the box; and the document content and the question never leave the machine, which matters if this were ever pointed at anything sensitive. The real cost, which I'm not going to paper over: `qwen3.6:35b` is slow. My live verification run (below) took 20.7 seconds for a 336-token answer on local hardware; the equivalent Gemini call for a comparable question took 2.9 seconds. That's the actual trade-off — privacy and zero marginal cost, in exchange for roughly 7x the latency on this hardware. Anyone picking Ollama needs to know that going in, not discover it mid-demo.
+Zero-ops, embeds as a file inside the container. Worth calling out because it's an easy silent bug: Chroma's default distance metric is L2, not cosine, and if you create a collection without explicitly setting `hnsw:space` to cosine, everything downstream that assumes `similarity = 1 - distance` computes garbage without ever throwing an error. A test that only checks a vector against itself won't catch this, because L2 and cosine both give zero distance there — the test that actually catches it needs non-unit vectors where the two metrics diverge.
 
-Because that trade-off is real and situational rather than "Ollama is strictly better," the choice belongs at request time, not baked into a fixed deployment. That's why `PATCH /api/settings` exists as the one runtime-mutable piece of config in an otherwise env-var-only project — the extra surface area (a settings endpoint, an in-memory `app.state.active_llm_provider`, a frontend switcher) is worth it specifically because the two providers genuinely trade off against each other rather than one obsoleting the other. This is the same reasoning AnythingLLM uses for its own provider switcher, which is where I drew the pattern from directly rather than reinventing it.
+### Orchestration — mostly hand-rolled
 
-The switch is connectivity-checked before it's accepted, also mirroring AnythingLLM's liveness-check pattern: `PATCH /api/settings` probes `GET {OLLAMA_BASE_URL}/api/tags` with a 2-second timeout before flipping `active_llm_provider`, and rejects the switch with a 400 if the target isn't actually reachable — so "switched to Ollama" always means Ollama was actually there when you switched, not "I set a string and we'll find out on the next chat message." A deliberate part of that design: the `reachable` field for the *other*, non-target provider in a `PATCH` response isn't re-probed on that call (skipped on purpose, to avoid paying Ollama's network round-trip on a request that's switching to Gemini), so a client that trusted that field directly, without ever re-fetching, would show it as stale. That's exactly what `ProviderSwitcher.tsx` did until a review pass caught it: it set its UI state straight from the `PATCH` response and never refetched, so the just-left provider stayed pinned at "unreachable" until a manual page reload — not a few seconds of staleness, indefinite. Two fixes came out of that, one per side. On the frontend, `handleSelect` now follows a successful `PATCH` with one `GET /api/settings` call (which always re-probes both providers) and renders from that response, falling back to the `PATCH` response only if the follow-up `GET` itself fails. On the backend, the un-probed provider's `reachable` used to be a hardcoded `false` — which wasn't stale data so much as a *fabricated* one: the API stated "Ollama is down" as fact when the truth was "we didn't look," and every consumer, not just this UI, got that lie. `ProviderInfo.reachable` is now `bool | None`, and `PATCH` returns `null` for whichever provider it deliberately skipped; `GET` always probes, so it never returns `null`. The switcher treats anything other than a confirmed `true` as "don't offer this yet," which is visible for at most the one render frame between the `PATCH` response and the follow-up `GET`. `PATCH /api/settings` still only probes the switch target — that optimization is correct and unchanged; it just no longer invents an answer for the other one.
+`langchain-text-splitters` is the only piece of LangChain or LlamaIndex in the codebase, used for exactly the recursive character splitter. Retrieval, prompt assembly, and generation are direct calls to the `google-genai` SDK in small single-purpose modules. For one retrieval strategy over a local document set, a thin custom pipeline is more debuggable than adopting a framework's abstractions for logic this simple. I'd reach for LlamaIndex if this needed agentic multi-step retrieval or a swappable retriever — it doesn't, so I didn't build for that.
 
-A switch that passed its liveness check can still fail later — Ollama stopped between the switch and the question, or the configured model was never pulled. `ollama_generation_service` raises those as a `ConnectionError` carrying an actionable sentence ("Is Ollama running at `<url>`, and is the model `<model>` pulled?"), and `chat.py` streams *that* string in the SSE `error` frame rather than its generic "temporarily unavailable" fallback, then persists the same text so a reload shows what the user actually saw. The passthrough is deliberately narrow — only `ConnectionError`, which nothing on the Gemini path raises — so raw google-genai exception text never reaches the UI.
+### Prompt and context management
 
-Embeddings deliberately do *not* have an Ollama option, even though Ollama can serve embedding models too. This isn't an oversight — it's the same dimension-compatibility reasoning as the embedding model choice above: every vector already in Chroma is a 768-dim `gemini-embedding-001` vector, and cosine similarity between vectors from two different embedding models — different dimensions, different semantic space — is meaningless. You'd either have to re-embed the entire store on every switch or silently corrupt retrieval. Generation is stateless per request, so switching it costs nothing; embeddings are load-bearing state, so switching them would be a migration, not a toggle. The design spec calls this out explicitly as a non-goal, and I held it throughout.
+Retrieved chunks are deduplicated by document and chunk index, then concatenated up to a 6000-character budget, with one exception: the first chunk is always included even if it alone exceeds the budget, so a single large relevant chunk never gets dropped entirely. Conversation memory is the last four messages, included verbatim, no summarization — summarization would let the model lose precise detail from early in a long conversation, and it adds an extra LLM call and a new failure mode for a use case that doesn't need it yet. If this needed to support long conversations, a sliding-window-plus-summary hybrid is the next step.
 
-Provider selection lives in `app.state.active_llm_provider` — an in-memory variable, not a database row or a `.env` value — and resets to `DEFAULT_LLM_PROVIDER` on every backend restart. That's a documented trade-off, not something I forgot to wire up: persisting it would mean either a settings table (more schema, more migration surface, for a project that already deliberately skips Alembic) or writing back to `.env` at runtime (fragile, and wrong for a containerized deployment where `.env` is often read-only). For a single-process local tool, "restart returns you to the configured default" is honest and cheap. A multi-user or multi-replica deployment would need this in a real store — I'd add it the same day auth got added, for the same reason: both are "this now has per-user state" problems.
+### Guardrails and quality control
 
-**What I actually verified, for real:** with the backend running against my live local Ollama instance (`qwen3.6:35b` at `http://localhost:11434`), I `PATCH`ed the provider to `ollama` and got back `"active_llm_provider": "ollama"` with both providers reported reachable. I then asked "What embedding model does DocMind AI use?" through the real `/api/chat` endpoint. The model answered, streamed token-by-token over 20.7 seconds: *"DocMind AI uses the `gemini-embedding-001` model via Google's Gemini API for generating embeddings [Source 1]."* — grounded in the actual seed doc, with a real citation to `docmind-overview.md` at similarity score 0.7624, `"provider": "ollama"` in the `done` frame, tokens_in 835 / tokens_out 336. That turn showed up with `"provider": "ollama"` in both `/api/chat/history` and `/api/observability/requests`. I then switched back to `gemini` and asked a different question ("What vector database does DocMind AI use?") through the same endpoint — got a real Gemini answer (*"DocMind AI uses ChromaDB (in persistent file mode)... [Source 3]"*) in 2.9 seconds with `"provider": "gemini"`, confirming the switch is genuinely bidirectional, not a one-way migration. Same caliber of proof as the Gemini-only end-to-end run described above — a real model, a real question, a real citation, not a mock.
+I kept these as two separate mechanisms, because they fail differently and conflating them makes debugging harder. The guardrail is the system prompt instructing the model to answer only from provided sources and say plainly when it doesn't know. Quality control is a similarity-score threshold (0.3 by default), computed before the model ever sees the query — if the top retrieved chunk scores below it, the turn is flagged low-confidence and shown as a warning in the UI. A guardrail failure means the model ignored instructions; a low-confidence flag means retrieval didn't find anything relevant in the first place. Those need different fixes, so I didn't want one signal standing in for both.
 
-### Vector store: ChromaDB, persistent local mode, cosine space
+Separately from that, there's the prompt-injection and PII-redaction pass described above — regex-based, applied to user input only. It catches the obvious cases ("ignore previous instructions," SSN-shaped strings) and nothing subtler. I'd call it a first pass, not a guardrail I'd stake anything on.
 
-Zero-cost, zero-ops, embeds directly in the container as a file. The one thing I want to flag because it bit a reviewer during a code-review pass on this project: Chroma's *default* distance metric is L2, not cosine. If you create a collection without explicitly passing `metadata={"hnsw:space": "cosine"}`, everything downstream that assumes `similarity = 1 - distance` silently computes garbage — and worse, it doesn't error, it just returns wrong-but-plausible-looking numbers. This is exactly the kind of bug that passes a lazy test (query an identical vector against itself — L2 and cosine both give distance 0, so the bug is invisible) and fails in production. The real test in this repo stores non-unit vectors specifically so cosine and L2 diverge, and asserts the score that only cosine would produce.
-
-### Orchestration: hand-rolled, not LangChain/LlamaIndex end-to-end
-
-I use `langchain-text-splitters` for exactly one thing — the recursive character splitter — and nothing else from either framework. Retrieval, prompt assembly, and generation are direct calls to the `google-genai` SDK, wrapped in small, single-purpose modules (`core/rag/retrieval.py`, `core/rag/prompt.py`, `services/generation_service.py`). For a single retrieval strategy like this one, a thin custom pipeline is more debuggable and more honest about what it's doing than adopting a framework's abstractions for logic this simple. If this needed multi-step agentic reasoning, tool use, or a swappable retriever, I'd reach for LlamaIndex. It doesn't, so I didn't.
-
-### Context management
-
-Retrieved chunks get deduped by `(document_id, chunk_index)`, then concatenated up to a 6000-character budget — with one deliberate exception: the first chunk is always included even if it alone exceeds the budget, so a single huge relevant chunk never gets silently dropped to zero context. Conversation memory is the last 4 messages (2 exchanges), included verbatim — no summarization. That's a real trade-off, not an oversight: summarization would let the model "forget" precise details from turn 1 by turn 6, but it costs an extra LLM call and adds a failure mode (summarization drift) I didn't think was worth it for a demo-scale conversation. If this needed to support genuinely long conversations, summarization or a sliding-window-plus-summary hybrid would be the next thing I'd build.
-
-### Quality control and guardrails
-
-Two separate things, on purpose:
-
-- **Guardrail** = the system prompt instructs the model to answer only from the provided sources and to say plainly when it doesn't know, rather than guess. This is a behavioral constraint on the model.
-- **Quality control** = a similarity-score threshold (0.3 default) computed *before* the model ever sees the query. If the top retrieved chunk scores below that, the turn is tagged `low_confidence` and surfaced as an amber warning in the UI — this is a measurable signal about the *retrieval*, independent of what the model says. I kept these separate because they fail differently: a guardrail failure is the model ignoring instructions; a quality-control failure is the retrieval not finding anything relevant in the first place. Conflating them into "the model said something wrong" loses the ability to debug which stage actually broke.
-
-Gemini calls are wrapped in `tenacity` retry with exponential backoff on 429/500/502/503/504 — but only around *starting* the stream, not around iterating it. Once tokens have started reaching an SSE client, retrying a failed generation would mean re-sending duplicate or garbled text; there's no clean way to resume a partially-streamed response, so a mid-stream failure propagates to an `event: error` frame instead. That's a real, disclosed limitation: a network blip 2 seconds into a long answer currently means "start over," not "resume." I'd fix this with idempotent client-side resume logic if this were going to production, but it's not a gap I'm going to pretend doesn't exist.
+Gemini calls retry with exponential backoff on rate-limit and server errors, but only around starting the stream, not around iterating it — once tokens are reaching the client there's no clean way to resume a partially streamed response, so a mid-stream failure surfaces as an error frame instead of a silent retry. That's a real limitation I haven't fixed, not an oversight I'm unaware of.
 
 ### Observability
 
-Structured JSON logs (stdlib `logging` + a ~15-line custom formatter — I skipped `structlog` deliberately; same output shape, one fewer dependency for a reviewer to look up). Every chat turn records latency, tokens in/out, chunks retrieved, and top similarity score directly on the `chat_messages` row. The Observability tab in the frontend reads that same data back — this was the highest-leverage design choice in the whole UI, because it turns "we have structured logging" from a README claim into something you can click through and watch update live while you use the Chat tab. That's also just what a forward-deployed engineer's job actually looks like day to day: building the internal tool that lets a client (or a teammate) see what a system is doing without reading log files.
+Structured JSON logs via the standard library's `logging` module plus a small custom formatter — I skipped `structlog` on purpose, since the output shape is the same either way and it's one fewer dependency to justify. Every chat turn records latency, token counts, chunks retrieved, and top similarity score directly on its database row, and the Observability tab in the frontend reads that same data back live. That was the highest-leverage UI decision in the project, because it turns "there's structured logging" from a README claim into something you can watch update while you use the app.
 
-## Key technical decisions and why
+## Key technical decisions
 
-| Decision | Why | Alternative considered |
-|---|---|---|
-| Citations store denormalized JSON on `chat_messages`, not a normalized `citations` table | Citations are only ever read alongside their parent message — a join buys nothing here | Normalized table with FKs — added complexity for zero query flexibility gained |
-| No Alembic migrations | Schema changes are rare and `Base.metadata.create_all()` is honest about the cost: when one *does* happen you delete the local DB. That did happen once — the Ollama work added `chat_messages.provider` — and "drop the dev DB" was still cheaper than carrying a migration framework | Alembic — correct for a schema that evolves post-launch against data you can't throw away, premature here |
-| Synchronous ingestion, no task queue | Files are small and local; a queue is infra weight with no payoff at this scale | Celery/RQ + Redis — the first thing I'd add for concurrent large-batch uploads |
-| Single conversation thread, no session list | "Simple interface" is explicit in the brief; a session picker is UI surface area with no rubric payoff | Multi-session chat like a typical LLM product — deliberately cut |
-| `expire_on_commit` snapshot before use in the SSE generator | SQLAlchemy expires ORM objects on commit by default; the chat endpoint commits the user message *then* needs to read prior history inside a generator that runs after the request-scoped session is closed — using the live ORM objects there throws `DetachedInstanceError` | Discovered this the hard way (see below) — worth calling out because it's a real, non-obvious SQLAlchemy + FastAPI + generator interaction |
+| Decision | Why |
+|---|---|
+| Citations stored as denormalized JSON on the chat message row, not a separate table | Citations are only ever read alongside their parent message — a join buys nothing here |
+| No migration framework | Schema changes are rare enough that dropping the local dev database when one happens is cheaper than carrying Alembic. This did happen once (a `provider` column got added) and the cost was exactly "delete one file" |
+| Synchronous document ingestion, no task queue | Files are small and local for this use case; a queue is infrastructure weight with no payoff yet — first thing I'd add for large concurrent uploads |
+| Provider selection lives in memory, not a database row | Resets to the configured default on restart. Persisting it would mean either a settings table or writing back to `.env` at runtime, both more machinery than a single-process local tool needs. A multi-replica deployment would need this in a real store, same day auth got added |
 
-That `DetachedInstanceError` is worth a specific mention because it's the best example in this codebase of "code that passes its own test suite and still breaks in the exact scenario it was built for." The chat endpoint's first version fetched conversation history, committed the new user message, then read that history again inside the streaming generator — which by then was running after FastAPI had already closed the request's DB session. It worked fine for the first message of any conversation (no history to read) and crashed on the second. None of the initial tests exercised two sequential messages in one conversation, because the endpoint's own literal spec didn't call it out as a scenario. It only surfaced during a structured code-review pass that specifically asked "does this actually work for a multi-turn conversation, which is the whole point of a chat feature?" — a good reminder that a green test suite tells you what you tested, not what you built.
+One bug worth mentioning on its own: the chat endpoint's first version fetched conversation history, committed the new user message, then tried to read that history again inside the streaming generator — which by then was running after the request's database session had already closed. It worked for the first message of any conversation and crashed on the second, because nothing in the initial test pass exercised two sequential messages in the same conversation. It surfaced during a review pass that specifically asked whether the endpoint handled an actual multi-turn conversation, which is the whole point of a chat feature. A green test suite tells you what got tested, not what got built — this was a good reminder of that.
 
-## Engineering standards followed (and some I skipped)
+## Engineering standards followed, and some I didn't
 
-**Followed:**
-- TDD for every backend module — chunking, parsers, embedding, vector store, ingestion, retrieval, prompt, generation, and every API route were written test-first, with the failing state actually run and captured before the implementation existed.
-- Structured logging and per-request metrics from day one, not bolted on later.
-- Type safety across the stack boundary — the frontend's TypeScript types are generated from FastAPI's live OpenAPI schema (`scripts/generate-types.sh` → `frontend/lib/api-types.ts`), not hand-guessed and left to drift. `lib/api-client.ts` derives every response type from that generated file, so renaming a backend field breaks the frontend build instead of failing silently at runtime. The one deliberate exception: a few `str` fields (document `status`, message `status`) are re-narrowed to literal unions in the client, because the backend produces those values in code rather than via an Enum, so OpenAPI can only describe them as `string`.
-- Zero hardcoded secrets — every config value flows through `pydantic-settings` reading `.env`, with `.env.example` committed and `.env` gitignored.
-- Every mocked test boundary is the actual I/O edge (Gemini API calls), never the logic under test — the vector store tests hit a real ephemeral ChromaDB instance, the ingestion tests hit real SQLite, because mocking those would mean testing my mocks instead of my code.
+**Followed, and I'd stand behind these:**
+- Test-first development for the original RAG core — chunking, parsers, embedding, vector store, ingestion, retrieval, prompt assembly, generation, and the initial API routes were written test-first, with the failing state actually run before the implementation existed.
+- Structured logging and per-request metrics from the start, not bolted on later.
+- Generated types across the stack boundary — the frontend's TypeScript types come from the backend's live OpenAPI schema (`scripts/generate-types.sh`), so a backend field rename breaks the frontend build instead of failing silently at runtime.
+- Every mocked test boundary is the actual network edge (the Gemini API) — vector store and ingestion tests hit a real ephemeral Chroma instance and real SQLite, because mocking those would mean testing the mocks instead of the code.
 
-**Skipped, on purpose:**
-- No frontend test suite. I said this plainly rather than padding coverage with shallow snapshot tests that verify nothing. If I had another day, this is the first thing I'd add — React Testing Library on the three tab components, focused on the state machines (streaming, upload-busy-guard, citation-drawer-reset) rather than markup snapshots.
-- No auth. Single-user local tool; building a login system for an assignment that explicitly asks for a "simple interface" would be effort spent on the wrong thing.
-- No CI pipeline (GitHub Actions, etc.). The test suite exists and passes locally; wiring it into CI is mechanical and I'd rather spend the time budget on the parts of this that required actual judgment.
-- ~~Docker build itself is unverified~~ — now build-verified, see the update note near the top of this README.
+**Skipped, and I want to be specific about the cost of each:**
+- No CI pipeline. The suite runs and passes locally; wiring it into GitHub Actions is mechanical and I'd rather spend the time on things that needed judgment.
+- No frontend tests at all. This is the gap I'd close first with more time — nothing here checks the streaming, upload, or session-switching state machines except by hand.
+- Test-first discipline didn't hold for everything added after the initial RAG core. The 92 tests are almost entirely concentrated on the original pipeline; the auth router, rate limiting, CSV/XLSX parsing, and the whole frontend feature set added later (landing page, Mindmap Studio, sessions, document filtering) have little or no automated coverage. That's not a style choice — it's the later features outrunning the discipline the earlier ones were held to, and it's the honest reason the security layer above is weaker than it looks.
+- No real auth, despite there being an auth router. I noted this plainly in the section above rather than let the endpoint names imply more than the implementation delivers.
 
 ## Productionizing this
 
-If this needed to survive real traffic on AWS, GCP, or Azure, here's the order I'd actually do it in, not just a wishlist:
+In roughly the order I'd actually do it:
 
-1. **Async ingestion queue.** Right now, uploading a large PDF blocks the HTTP request until embedding finishes. First thing to fix at scale: move ingestion to a background worker (Celery or RQ + Redis, or GCP Cloud Tasks / AWS SQS + Lambda if going fully managed), return `202 Accepted` immediately, and let the Documents tab's existing "processing" status do what it's already built to do.
-2. **Redis for hot-query caching.** If the same questions get asked repeatedly (very likely for a doc-support use case), cache the embedding of a query and the retrieval result for some TTL — cuts Gemini embedding calls and Chroma query latency for the common case without touching correctness.
-3. **Vector store migration path: Chroma → Qdrant (or a managed pgvector).** Chroma's local persistent mode doesn't cluster. The moment this needs more than one backend replica, Qdrant (self-hosted or Qdrant Cloud) is the natural next step — same metadata-filtering and cosine-similarity semantics I'm already relying on, just distributed. This is *not* a rewrite: `services/vector_store.py` is already the single seam where that swap happens; nothing above it (retrieval, ingestion) knows or cares which vector DB is behind it.
-4. **Deployment topology.** My default pick would be **Cloud Run** (GCP) for both services — scale-to-zero fits a demo/internal-tool traffic pattern, and the existing Dockerfiles need zero changes to deploy there. If this were an AWS shop instead, **ECS Fargate** behind an ALB is the equivalent — same container images, more infra to hand-configure (task definitions, target groups) for the same outcome. I'd pick Cloud Run over ECS by default for anything this size purely because there's less YAML between "container that works locally" and "container that works in prod."
-5. **Postgres instead of SQLite** once there's more than one backend replica — SQLite's single-writer model is fine for one container, not for horizontal scaling. The SQLAlchemy layer is already abstracted enough that this is a connection-string change plus an Alembic migration setup, not a rewrite.
-6. **Auth**, if this stops being single-user — most likely an identity-aware proxy in front of Cloud Run (GCP IAP) or ECS + Cognito, rather than building auth into the app itself, unless per-user document isolation becomes a requirement (at which point it's a real schema change: documents and chat history need an owner column and every query needs a `WHERE owner = current_user` clause added, everywhere, correctly).
-7. **A reranking stage** between retrieval and generation (a cross-encoder over the top-k candidates before truncation) if retrieval precision ever becomes the bottleneck — I didn't build this because with a small document collection, plain cosine similarity is already precise enough that I couldn't justify the added latency and complexity, but it's the standard next lever for RAG quality at scale.
+1. **Real auth, first.** Replace the hardcoded admin secret and simulated Google sign-in with actual OAuth and a token the backend verifies against a real identity provider, and enforce role checks server-side instead of only hiding UI. This is the one item on this list I'd do before anything else, including before adding new features, because right now the admin surface is open to anyone who reads the network tab.
+2. **Async ingestion.** A large upload currently blocks the request until embedding finishes. Move it to a background worker (Celery/RQ + Redis, or a managed queue like SQS + Lambda or Cloud Tasks) and return immediately, letting the existing "processing" status in the Documents tab do its job.
+3. **A real secrets store.** The runtime config-mutation endpoint currently rewrites `.env` on disk, including the Gemini API key. In a real deployment that's a secrets manager (AWS Secrets Manager, GCP Secret Manager) with the mutation endpoint gated behind the auth from step 1.
+4. **Redis for hot-query caching.** Repeated questions against the same document set are likely — caching query embeddings and retrieval results for a short TTL cuts both Gemini calls and Chroma latency without touching correctness.
+5. **Vector store migration path.** Chroma's local persistent mode doesn't cluster. The moment this needs more than one backend replica, Qdrant (self-hosted or managed) is the natural next step, using the same cosine-similarity semantics already in place — the vector store module is already the single seam where that swap happens.
+6. **Deployment.** Cloud Run for both services if staying on GCP — scale-to-zero fits this traffic pattern and the existing Dockerfiles need no changes. ECS Fargate behind an ALB is the AWS equivalent, with more infrastructure to hand-configure for the same result.
+7. **Postgres instead of SQLite**, once there's more than one backend replica — SQLite's single-writer model doesn't hold up to horizontal scaling.
+8. **A rate limiter that isn't in-process memory** — Redis-backed or pushed to an API gateway, so it actually holds across restarts and multiple instances.
+9. **A reranking stage** between retrieval and generation if precision ever becomes the bottleneck. I didn't build this because with a small document collection, cosine similarity alone is already precise enough that the added latency wouldn't be worth it yet — it's the standard next lever once that stops being true.
 
-## What I deliberately didn't build (and why that's not laziness)
+## What I deliberately didn't build
 
-The brief is explicit: *"we value a solid & well-engineered basic solution A LOT MORE than an over-engineered complex one."* I took that as an actual constraint, not a throwaway line, and cut things I initially drafted into the design before catching myself:
+The brief states outright that a solid, well-engineered basic solution beats an over-engineered complex one, and I took that as a real constraint rather than a throwaway line:
 
-- **Multi-workspace / multi-tenant document collections** — one unified collection does everything the "dual-source ingestion" requirement asks for (static + uploaded documents merging into one searchable store) without the CRUD and routing surface area a workspace switcher would add.
-- **A chat session list/switcher** — one continuous thread with "Clear conversation" is the actual simple interface asked for; a session picker is a feature nobody asked for grafted onto a take-home.
-- **A normalized citations table, Alembic migrations, a background task queue** — all covered above, all the kind of infrastructure that's correct at 100x this scale and premature at this one.
+- **Multi-tenant document workspaces.** One shared document collection covers everything the assignment actually asks for (static and uploaded documents merging into one searchable store) without the routing and CRUD surface a workspace switcher would add.
+- **A normalized citations table, a migration framework, a background task queue.** All covered above — the right call at a scale this isn't at yet.
 
-I'd rather hand over a smaller system I can defend every line of than a bigger one where half the code is there because it "seemed thorough."
+I'd rather submit a smaller system I can defend every line of than a larger one where part of the code exists because it looked thorough.
 
-## AI-assisted development: what I did and didn't hand off
+## How I used AI tools in this build
 
-I used Claude Code for this build, and I want to be specific about the shape of that, because "I used an AI coding assistant" covers a huge range of actual practices and the brief specifically asks me to judge where AI output was and wasn't appropriate.
+I used Claude Code throughout. The useful way to describe that isn't "I used an AI coding assistant" — it's where I drew the line between what I let it own and what I did myself.
 
-**What I let it own:** mechanical implementation against a spec I'd already reviewed and approved — writing a chunking function to a signature I'd specified, writing SQLAlchemy models to a schema I'd designed, writing React components to an interface I'd already decided on. This is the highest-leverage use of an AI coding assistant: it's fast at typing correct code once the *decisions* are made, and slow (or wrong) at making the decisions.
+What it was good for: mechanical implementation against a spec I'd already settled — writing a chunking function against a signature I'd already specified, SQLAlchemy models against a schema I'd already designed, React components against an interface I'd already decided. That's the right use of it: fast at typing correct code once the decisions are made, and not the one making the decisions.
 
-**What I did myself first, every time:** the design. Before any code got written, I went through a structured design pass — chunking strategy, embedding/LLM selection, retrieval approach, what to cut and why — and only after that was settled did implementation start. I also caught it when the model's *training knowledge* was stale in a way that mattered: the original spec called for `text-embedding-004` and `gemini-2.5-flash`, both of which had been superseded (one outright deprecated) by the time this was actually built. An AI assistant's confident, fluent description of "the Gemini API" is a description of training data, not of the live API — I verified both model names against current docs before writing a single line of code that depended on them, because shipping against a dead API isn't a hypothetical risk, it's the kind of bug that only shows up when someone actually runs the thing.
+What I did myself, every time: the actual design. Chunking strategy, model selection, retrieval approach, what to cut — settled before implementation started, not delegated and reviewed after the fact. I also had to catch it being confidently wrong about the API surface at one point: the model names I'd originally have used were stale by the time I built this (one was deprecated outright), and an AI assistant describing "the Gemini API" is describing its training data, not the live API. I checked both model names against current documentation before writing anything that depended on them.
 
-**Where I made the assistant show its work rather than trust its output:** every task in this build went through a structured review before I accepted it — spec compliance (did it build what was asked, nothing more) and code quality (is it actually correct, not just plausible-looking) as two separate questions. This caught real bugs, not style nits: a `DetachedInstanceError` that would have crashed every second message of every real conversation, a file-deletion bug where deleting one uploaded document could silently destroy a different document's file on disk if they shared a filename, a Docker `COPY` instruction using shell syntax that instruction doesn't support, and a Next.js build-time-vs-runtime environment variable bug that would have silently broken any deployment that changed the backend's port. None of these were things I asked the assistant to "double-check" — they came from treating "the tests pass" and "this is correct" as different claims, and verifying the second one separately, every time.
+Where I made it show its work rather than take its output on faith: every piece of this went through a review pass asking two separate questions — does this match what was actually asked, and is it actually correct, not just plausible-looking. That caught real bugs, not style nits: the `DetachedInstanceError` described above, which would have broken every second message of every real conversation; a file-deletion bug where removing one uploaded document could silently delete a different document's file if they happened to share a filename; and a Docker `COPY` instruction using shell syntax that instruction doesn't actually support. None of those were things I asked it to double-check specifically — they came from treating "the tests pass" and "this is correct" as genuinely different claims and checking the second one separately every time.
 
-**My honest do's and don'ts, after actually doing this:**
-- **Do** make the AI verify facts that have a shelf life — model names, API surfaces, library versions — against a live source instead of trusting what it "remembers." It will sound equally confident either way.
-- **Do** separate "does this match spec" from "is this good code" as two explicit questions. An AI assistant (and a human, honestly) will happily ship code that technically satisfies a spec while being subtly wrong in ways the spec didn't anticipate.
-- **Don't** let it design the system. It's genuinely good at "here are 3 ways to do X, with trade-offs" when asked — but the choice, and owning the reasoning for it, has to be mine, because that reasoning is the actual thing being evaluated here.
-- **Don't** accept "the tests pass" as equivalent to "this works." The `DetachedInstanceError` bug above passed its own test suite. It failed on the exact scenario — a real multi-turn conversation — that the feature exists for, and nobody had written a test for that scenario because it wasn't explicitly called out.
-- **Do** make it disclose what it *didn't* verify, as loudly as what it did. This README says outright that Docker itself is untested here. That's a more useful sentence than a confident "everything works" would have been.
+What I'd tell someone else doing this: verify anything with a shelf life — model names, API surfaces, library versions — against a live source rather than what the model remembers, because it sounds equally confident either way. Keep "does this match spec" and "is this good code" as two separate questions, because code can satisfy a spec while being subtly wrong in a way the spec never anticipated. Don't let it make the design decisions — it's genuinely useful for "here are three ways to do this, with tradeoffs" when you ask, but the choice has to be yours, because that reasoning is the actual thing anyone reviewing this is evaluating. And don't take a passing test suite as proof of correctness — the `DetachedInstanceError` bug passed its own tests and failed on the one scenario, a real multi-turn conversation, that the feature existed for.
+
+Where I fell short of my own standard: the security and admin features described above are the clearest counterexample to everything in the paragraph above. They went in later, under less of the review discipline the original RAG core got, and it shows — a hardcoded secret, a decorative sign-in flow, near-zero test coverage. I noticed this doing a pass to write this document, not while building the features, which is itself the finding worth stating plainly: the review discipline has to apply to every feature added, not just the ones from the first pass, or it isn't really a discipline.
 
 ## What I'd do differently with more time
 
-In roughly the order I'd tackle them:
+Roughly in the order I'd tackle them:
 
-1. **Frontend test coverage** — React Testing Library on the streaming/upload/citation state machines, the one place I have zero automated coverage.
-2. **Reranking** — a cross-encoder pass between retrieval and generation, once I had a large enough test document set to actually measure whether it improves precision.
-3. **Async ingestion** — move upload processing off the request path before it becomes a real bottleneck, not after.
-4. **Resumable streaming** — fix the honest gap where a mid-stream Gemini failure currently means "start the answer over" instead of "resume from where it broke."
-5. **A small eval set** — a fixed list of question/expected-citation pairs run against the seed documents, checked into the repo, so a future change to chunking or retrieval parameters has a regression signal beyond "it still returns something."
-6. **Static document reconciliation** — editing or deleting a file in `data/static/` doesn't clean up its old indexed version. The bootstrap only *adds* new-or-changed files (keyed by content hash), so an edited file produces a second `Document` row and a second set of vectors under the same filename while the stale ones stay queryable forever, and a deleted file's vectors are unreachable via the API (`DELETE` is intentionally blocked for `source_type=static`). For a real deployment I'd add a diff-and-prune pass to the bootstrap: any indexed static-sourced document whose file no longer exists — or whose content hash no longer matches — gets its vectors and DB row removed before the new ones are added.
+1. **Fix the auth layer for real** — replace the hardcoded secret and simulated sign-in with something that would survive being pointed at by a security reviewer, not just a feature demo.
+2. **Frontend test coverage** — the streaming, upload, and session-switching state machines are the one place with zero automated coverage.
+3. **Bring the later features up to the same test standard as the RAG core** — auth, rate limiting, and spreadsheet parsing all shipped with thin or no tests, which is a discipline gap, not a scope gap.
+4. **Async ingestion** before it becomes a real bottleneck rather than after.
+5. **Resumable streaming** — fix the gap where a mid-stream Gemini failure means starting the answer over rather than resuming it.
+6. **A small eval set** — a fixed list of question/expected-citation pairs checked into the repo, so a future change to chunking or retrieval parameters has a regression signal beyond "it still returns something."
+7. **Reranking**, once there's a large enough document set to actually measure whether it improves precision.
 
 ### Known limitations worth stating plainly
 
-- **Citation badges show what was *retrieved*, not what was *cited*.** Every chunk handed to the model as context gets a badge and counts toward the "N sources retrieved" footer, even if the model grounded its answer in only one of them. The UI labels this honestly rather than implying verified attribution; deriving true citations would mean parsing the `[Source N]` markers back out of the completed answer.
-- **Static documents are add-only** — see item 6 above.
+- **Citation badges show what was retrieved, not necessarily what was cited.** Every chunk handed to the model as context gets a badge, even if the model only grounded its answer in one of them. Deriving true citations would mean parsing the model's `[Source N]` markers back out of the finished answer, which I didn't build.
+- **Static documents are add-only.** Editing or deleting a file in `data/static/` doesn't clean up its old indexed version — the bootstrap only adds new-or-changed files, so an edited file leaves a stale second copy queryable indefinitely, and a deleted file's vectors become unreachable through the API. A real deployment needs a diff-and-prune pass on boot.
+- **The security and admin layer is demonstration-grade**, for all the reasons above — I'd rather this be the last thing you read here than a surprise later.
 
 ## Screenshots
 
-Not included in this submission draft — I'd add these (Chat tab mid-stream with citation badges, the citation drawer open, Documents tab with mixed static/uploaded sources, Observability tab showing real request metadata, dark mode) as the last step before actually submitting.
+Not included in this draft. I'd add these — the Chat tab mid-stream with citation badges, the citation drawer, the Documents tab with mixed static and uploaded sources, the Observability tab during real use, the multi-session sidebar, and dark mode — as the last step before actually submitting.
