@@ -29,7 +29,11 @@ export function ProviderSwitcher() {
     }
   }
 
-  if (!settingsState) return null;
+  if (!settingsState) {
+    // Even without settings loaded, surface a load failure instead of rendering nothing —
+    // an early `return null` here would silently swallow the error set in the effect above.
+    return error ? <span className="text-xs text-red-500">{error}</span> : null;
+  }
 
   return (
     <div className="flex items-center gap-1.5">
