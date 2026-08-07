@@ -36,6 +36,14 @@ def _start_stream(system_instruction: str, contents: list[dict]):
     )
 
 
+def _to_gemini_contents(contents: list[dict]) -> list[dict]:
+    role_map = {"assistant": "model", "user": "user"}
+    return [
+        {"role": role_map.get(c["role"], c["role"]), "parts": [{"text": c["content"]}]}
+        for c in contents
+    ]
+
+
 def stream_generate(system_instruction: str, contents: list[dict], usage: UsageInfo) -> Iterator[str]:
     """Yield text deltas from Gemini. Token usage is written into `usage` as it arrives —
     a mutable out-parameter because a generator's return value isn't accessible until
@@ -45,7 +53,7 @@ def stream_generate(system_instruction: str, contents: list[dict], usage: UsageI
     over SSE, a mid-stream failure can't be retried without re-sending duplicate text, so it
     propagates and the caller is expected to end the response with an error event instead.
     """
-    stream = _start_stream(system_instruction, contents)
+    stream = _start_stream(system_instruction, _to_gemini_contents(contents))
     for chunk in stream:
         if chunk.usage_metadata:
             usage.tokens_in = chunk.usage_metadata.prompt_token_count or usage.tokens_in

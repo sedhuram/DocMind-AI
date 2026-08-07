@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     embedding_model: str = "gemini-embedding-001"
     embedding_dimensions: int = 768
     generation_model: str = "gemini-3.6-flash"
+    default_llm_provider: str = "gemini"
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "qwen3.6:35b"
     chunk_size: int = 1000
     chunk_overlap: int = 150
     retrieval_top_k: int = 5

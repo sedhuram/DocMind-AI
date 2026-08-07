@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.services.generation_service import stream_generate, UsageInfo
+from app.services.generation_service import stream_generate, UsageInfo, _to_gemini_contents
 
 
 def _fake_chunk(text, tokens_in=None, tokens_out=None):
@@ -23,7 +23,7 @@ def test_stream_generate_yields_text_deltas_and_captures_usage(mock_start_stream
     ])
     usage = UsageInfo()
 
-    deltas = list(stream_generate("system", [{"role": "user", "parts": [{"text": "hi"}]}], usage))
+    deltas = list(stream_generate("system", [{"role": "user", "content": "hi"}], usage))
 
     assert deltas == ["Hello ", "world"]
     assert usage.tokens_in == 42
@@ -46,3 +46,11 @@ def test_stream_generate_propagates_unrecoverable_errors(mock_start_stream):
     usage = UsageInfo()
     with pytest.raises(RuntimeError):
         list(stream_generate("system", [], usage))
+
+
+def test_to_gemini_contents_maps_assistant_to_model_role():
+    result = _to_gemini_contents([{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}])
+    assert result == [
+        {"role": "user", "parts": [{"text": "hi"}]},
+        {"role": "model", "parts": [{"text": "hello"}]},
+    ]

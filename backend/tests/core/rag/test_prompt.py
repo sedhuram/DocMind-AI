@@ -14,7 +14,7 @@ def test_build_contents_includes_context_and_question():
     contents = build_contents("what is the fact?", retrieval, history=[])
 
     assert contents[-1]["role"] == "user"
-    text = contents[-1]["parts"][0]["text"]
+    text = contents[-1]["content"]
     assert "some fact" in text
     assert "what is the fact?" in text
 
@@ -30,7 +30,7 @@ def test_build_contents_caps_history_to_conversation_window():
 
     # 4 history turns + 1 new question turn
     assert len(contents) == 5
-    assert contents[0]["parts"][0]["text"] == "turn 6"
+    assert contents[0]["content"] == "turn 6"
 
 
 def test_build_contents_handles_no_relevant_sources():
@@ -38,4 +38,4 @@ def test_build_contents_handles_no_relevant_sources():
 
     contents = build_contents("anything", retrieval, history=[])
 
-    assert "no relevant sources" in contents[-1]["parts"][0]["text"].lower()
+    assert "no relevant sources" in contents[-1]["content"].lower()
