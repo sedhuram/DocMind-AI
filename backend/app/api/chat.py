@@ -23,12 +23,26 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
-# Sent in the SSE `error` frame *and* persisted as the failed turn's content. Persisting a
+# Fallback sent in the SSE `error` frame *and* persisted as the failed turn's content when
+# the underlying exception has nothing safe or useful to say to a user. Persisting a
 # non-empty placeholder matters for two reasons: an empty-text turn replayed into Gemini's
 # `contents` on the next request is rejected with a 400 (so one transient failure would
 # cascade into every later turn), and a reloaded conversation would otherwise render the
 # failed turn as an unexplained blank bubble.
 _ERROR_MESSAGE = "The model is temporarily unavailable. Please try again."
+
+
+def _user_facing_error(exc: BaseException) -> str:
+    """Surface a provider's own message only when it was deliberately written for a user.
+
+    `ollama_generation_service` raises `ConnectionError` carrying an actionable string
+    ("Is Ollama running at ...,  and is the model '...' pulled?"); showing the generic
+    fallback instead leaves a user with a down or un-pulled Ollama retrying forever with
+    no idea why. Nothing on the Gemini path raises `ConnectionError` — it propagates raw
+    google-genai / tenacity exceptions, whose text can carry request internals — so those
+    keep the generic message rather than leaking upstream detail into the UI.
+    """
+    return str(exc) if isinstance(exc, ConnectionError) and str(exc) else _ERROR_MESSAGE
 
 
 @dataclass(frozen=True)
@@ -91,14 +105,17 @@ def chat(
             for delta in generate_fn(SYSTEM_INSTRUCTION, contents, usage):
                 full_text.append(delta)
                 yield f"event: token\ndata: {json.dumps({'text': delta})}\n\n"
-        except Exception:
+        except Exception as exc:
             logger.exception("Chat generation failed")
             status = "error"
+            error_message = _user_facing_error(exc)
             # Replace (not append to) whatever partially streamed: a truncated grounded
             # answer replayed as conversation history is worse than an explicit failure
-            # marker, and this guarantees the persisted content is never empty.
-            full_text = [_ERROR_MESSAGE]
-            yield f"event: error\ndata: {json.dumps({'message': _ERROR_MESSAGE})}\n\n"
+            # marker, and this guarantees the persisted content is never empty. Persisting
+            # the same string that was streamed live keeps a reloaded conversation
+            # identical to what the user actually saw.
+            full_text = [error_message]
+            yield f"event: error\ndata: {json.dumps({'message': error_message})}\n\n"
 
         latency_ms = int((time.perf_counter() - start) * 1000)
         citations = [

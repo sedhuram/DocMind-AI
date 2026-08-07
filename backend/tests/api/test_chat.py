@@ -220,14 +220,71 @@ def test_chat_dispatches_to_ollama_when_active_provider_is_ollama(mock_retrieve,
         response = client.post("/api/chat", json={"message": "what formats are supported?"})
 
         assert response.status_code == 200
+        # `provider` in the done frame and in history both come from the request-scoped
+        # active-provider dependency, so they'd read "ollama" even if dispatch were
+        # inverted and the real Gemini path ran and failed. These three assertions are
+        # what actually pin the dispatch: the Ollama mock was invoked, its text reached
+        # the stream, and the turn did not fall into the error handler.
+        mock_stream.assert_called_once()
+        # _fake_stream yields the answer as two deltas, so they arrive as two separate
+        # `event: token` frames rather than one concatenated string.
+        assert "DocMind " in response.text
+        assert "supports PDF and DOCX." in response.text
+        assert "event: error" not in response.text
+
         done_line = [line for line in response.text.splitlines() if line.startswith("data:") and "provider" in line][0]
         payload = json.loads(done_line[len("data: "):])
         assert payload["provider"] == "ollama"
+        assert payload["status"] == "ok"
+        assert payload["tokens_in"] == 10
+        assert payload["tokens_out"] == 3
 
         history = client.get("/api/chat/history").json()
         assert history[-1]["provider"] == "ollama"
+        assert history[-1]["content"] == "DocMind supports PDF and DOCX."
     finally:
         client.app.state.active_llm_provider = "gemini"
+
+
+_OLLAMA_DOWN = "Ollama request failed. Is Ollama running at http://localhost:11434, and is the model 'qwen3.6:35b' pulled?"
+
+
+@patch("app.services.ollama_generation_service.stream_generate", side_effect=ConnectionError(_OLLAMA_DOWN))
+@patch("app.api.chat.retrieve", side_effect=_fake_retrieval)
+def test_chat_surfaces_ollama_connection_error_message(mock_retrieve, mock_stream, client):
+    # ollama_generation_service builds an actionable ConnectionError ("is Ollama running,
+    # is the model pulled?"). The chat handler used to discard it and always emit the
+    # generic "temporarily unavailable" string, leaving a user with a stopped Ollama or an
+    # un-pulled model no reason to do anything but retry forever.
+    client.app.state.active_llm_provider = "ollama"
+    try:
+        response = client.post("/api/chat", json={"message": "hello"})
+
+        assert response.status_code == 200
+        error_frame = [f for f in response.text.split("\n\n") if "event: error" in f][0]
+        data_line = [line for line in error_frame.splitlines() if line.startswith("data: ")][0]
+        assert json.loads(data_line[len("data: "):])["message"] == _OLLAMA_DOWN
+
+        # The persisted turn must match what was shown live, or a page reload would
+        # silently swap the actionable message for the generic one.
+        history = client.get("/api/chat/history").json()
+        assert history[-1]["status"] == "error"
+        assert history[-1]["content"] == _OLLAMA_DOWN
+    finally:
+        client.app.state.active_llm_provider = "gemini"
+
+
+@patch("app.services.generation_service.stream_generate", side_effect=RuntimeError("500 INTERNAL: internal upstream detail"))
+@patch("app.api.chat.retrieve", side_effect=_fake_retrieval)
+def test_chat_falls_back_to_generic_message_for_non_connection_errors(mock_retrieve, mock_stream, client):
+    # The Gemini path propagates raw google-genai exceptions, whose text can carry request
+    # internals; only a deliberately user-facing ConnectionError is passed through.
+    response = client.post("/api/chat", json={"message": "hello"})
+
+    error_frame = [f for f in response.text.split("\n\n") if "event: error" in f][0]
+    data_line = [line for line in error_frame.splitlines() if line.startswith("data: ")][0]
+    assert json.loads(data_line[len("data: "):])["message"] == "The model is temporarily unavailable. Please try again."
+    assert "internal upstream detail" not in response.text
 
 
 @patch("app.services.generation_service.stream_generate", side_effect=_fake_stream)
