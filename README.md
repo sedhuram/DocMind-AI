@@ -197,4 +197,28 @@ Roughly in the order I'd tackle them:
 
 ## Screenshots
 
-Not included in this draft. I'd add these — the Chat tab mid-stream with citation badges, the citation drawer, the Documents tab with mixed static and uploaded sources, the Observability tab during real use, the multi-session sidebar, and dark mode — as the last step before actually submitting.
+**Landing page.** The app doesn't drop straight into the chat UI — it opens on a product-style landing page first, with a feature summary underneath the fold.
+
+![Landing page hero](docs/screenshots/landing-hero.png)
+![Landing page feature grid](docs/screenshots/landing-features.png)
+
+**Workspace, dark mode.** The welcome state inside a session, before any question is asked — system capabilities and a short walkthrough instead of a blank box.
+
+![Dark mode workspace welcome screen](docs/screenshots/dark-mode-workspace.png)
+
+**Chat with citations and the source drawer open.** This run has real uploaded documents indexed alongside the static seed files, several past sessions in the sidebar, and a citation drawer open on the right showing the exact retrieved chunk (`README.md`, chunk 41, similarity 0.72) behind one of the numbered source badges in the answer.
+
+![Chat session with citation drawer open showing a retrieved chunk](docs/screenshots/chat-citations.png)
+
+**Observability tab.** The same latency/token/chunk/similarity metrics that get written to the database on every turn, read back live — including which provider, Gemini or Ollama, answered each one. This run makes the latency gap between the two concrete: the Ollama rows run from roughly 44 to 192 seconds against real documents, the Gemini rows for comparable questions sit around 5-7 seconds.
+
+![Observability tab showing per-request latency, tokens, and provider](docs/screenshots/observability-tab.png)
+
+**Engine & Feature Control Panel.** The runtime settings surface referenced throughout this document — provider switching and Gemini/Ollama configuration, then the retrieval and chunking parameters, both editable and hot-reloadable without a restart.
+
+![Engine control panel, LLM provider and keys tab](docs/screenshots/engine-panel-llm.png)
+![Engine control panel, RAG vector engine tab](docs/screenshots/engine-panel-rag.png)
+
+**Admin & Features tab.** Feature flags (mindmap, rate limiting, scratchpad export, paste-to-upload) next to a live security audit log of chat activity. This is the real, working half of the admin surface — the part worth trusting is here, not in the sign-in flow described earlier in this document.
+
+![Engine control panel, admin and features tab with feature flags and audit log](docs/screenshots/engine-panel-admin.png)
