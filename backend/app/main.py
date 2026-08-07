@@ -17,6 +17,7 @@ async def lifespan(app: FastAPI):
     configure_logging(settings.log_level)
     init_db()
     app.state.vector_store = VectorStore(settings.vector_db_dir)
+    app.state.active_llm_provider = settings.default_llm_provider
     _bootstrap_static_documents(app.state.vector_store)
     yield
 

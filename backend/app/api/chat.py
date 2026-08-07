@@ -9,13 +9,14 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_vector_store
+from app.api.deps import get_active_provider, get_vector_store
 from app.core.rag.prompt import SYSTEM_INSTRUCTION, build_contents
 from app.core.rag.retrieval import retrieve
 from app.db.session import SessionLocal, get_db
 from app.models.orm import ChatMessage
 from app.models.schemas import ChatMessageOut, ChatRequest
-from app.services.generation_service import UsageInfo, stream_generate
+from app.services import generation_service, ollama_generation_service
+from app.services.generation_service import UsageInfo
 from app.services.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,7 @@ def chat(
     payload: ChatRequest,
     db: Session = Depends(get_db),
     vector_store: VectorStore = Depends(get_vector_store),
+    provider: str = Depends(get_active_provider),
 ) -> StreamingResponse:
     history = db.query(ChatMessage).order_by(ChatMessage.created_at).all()
     # Snapshot before `db.commit()` below: that commit expires every ORM
@@ -79,12 +81,14 @@ def chat(
         retrieval = None
         status = "error"
 
+        generate_fn = ollama_generation_service.stream_generate if provider == "ollama" else generation_service.stream_generate
+
         try:
             retrieval = retrieve(payload.message, vector_store)
             contents = build_contents(payload.message, retrieval, history_snapshot)
             status = "low_confidence" if retrieval.is_low_confidence else "ok"
 
-            for delta in stream_generate(SYSTEM_INSTRUCTION, contents, usage):
+            for delta in generate_fn(SYSTEM_INSTRUCTION, contents, usage):
                 full_text.append(delta)
                 yield f"event: token\ndata: {json.dumps({'text': delta})}\n\n"
         except Exception:
@@ -117,7 +121,7 @@ def chat(
             citations=json.dumps(citations), latency_ms=latency_ms,
             tokens_in=usage.tokens_in, tokens_out=usage.tokens_out,
             chunks_retrieved=chunks_retrieved, top_score=top_score,
-            status=status, created_at=datetime.now(timezone.utc),
+            status=status, provider=provider, created_at=datetime.now(timezone.utc),
         )
         db_local.add(assistant_message)
         db_local.commit()
@@ -126,7 +130,7 @@ def chat(
         done_payload = {
             "citations": citations, "tokens_in": usage.tokens_in, "tokens_out": usage.tokens_out,
             "latency_ms": latency_ms, "chunks_retrieved": chunks_retrieved,
-            "top_score": round(top_score, 4), "status": status,
+            "top_score": round(top_score, 4), "status": status, "provider": provider,
         }
         # One structured record per completed turn, emitted through the app's JsonFormatter
         # (see app/core/logging.py) so the happy path - not just exception handlers -
@@ -165,5 +169,6 @@ def _to_schema(message: ChatMessage) -> dict:
         "citations": json.loads(message.citations) if message.citations else [],
         "latency_ms": message.latency_ms, "tokens_in": message.tokens_in,
         "tokens_out": message.tokens_out, "chunks_retrieved": message.chunks_retrieved,
-        "top_score": message.top_score, "status": message.status, "created_at": message.created_at,
+        "top_score": message.top_score, "status": message.status, "provider": message.provider,
+        "created_at": message.created_at,
     }

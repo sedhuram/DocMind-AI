@@ -13,7 +13,7 @@ def _fake_stream(system_instruction, contents, usage):
     yield "answer"
 
 
-@patch("app.api.chat.stream_generate", side_effect=_fake_stream)
+@patch("app.services.generation_service.stream_generate", side_effect=_fake_stream)
 @patch("app.api.chat.retrieve", side_effect=_fake_retrieval)
 def test_observability_lists_recent_assistant_turns(mock_retrieve, mock_stream, client):
     client.post("/api/chat", json={"message": "question one"})

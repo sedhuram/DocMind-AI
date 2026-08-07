@@ -41,7 +41,7 @@ def _fake_stream(system_instruction, contents, usage):
     yield "supports PDF and DOCX."
 
 
-@patch("app.api.chat.stream_generate", side_effect=_fake_stream)
+@patch("app.services.generation_service.stream_generate", side_effect=_fake_stream)
 @patch("app.api.chat.retrieve", side_effect=_fake_retrieval)
 def test_chat_streams_tokens_and_done_event(mock_retrieve, mock_stream, client):
     response = client.post("/api/chat", json={"message": "what formats are supported?"})
@@ -57,7 +57,7 @@ def test_chat_streams_tokens_and_done_event(mock_retrieve, mock_stream, client):
     assert payload["status"] == "ok"
 
 
-@patch("app.api.chat.stream_generate", side_effect=RuntimeError("upstream down"))
+@patch("app.services.generation_service.stream_generate", side_effect=RuntimeError("upstream down"))
 @patch("app.api.chat.retrieve", side_effect=_fake_retrieval)
 def test_chat_emits_error_event_on_generation_failure(mock_retrieve, mock_stream, client):
     response = client.post("/api/chat", json={"message": "hello"})
@@ -66,7 +66,7 @@ def test_chat_emits_error_event_on_generation_failure(mock_retrieve, mock_stream
     assert "event: error" in response.text
 
 
-@patch("app.api.chat.stream_generate", side_effect=RuntimeError("upstream down"))
+@patch("app.services.generation_service.stream_generate", side_effect=RuntimeError("upstream down"))
 @patch("app.api.chat.retrieve", side_effect=_fake_retrieval)
 def test_failed_turn_persists_non_empty_content(mock_retrieve, mock_stream, client):
     # A failed turn used to be saved with content="". That empty turn is replayed into
@@ -82,7 +82,7 @@ def test_failed_turn_persists_non_empty_content(mock_retrieve, mock_stream, clie
     assert history[1]["content"].strip() != ""
 
 
-@patch("app.api.chat.stream_generate", side_effect=_fake_stream)
+@patch("app.services.generation_service.stream_generate", side_effect=_fake_stream)
 @patch("app.api.chat.retrieve", side_effect=_fake_retrieval)
 def test_chat_turn_emits_structured_info_log(mock_retrieve, mock_stream, client, caplog):
     # The JsonFormatter previously only ever ran from exception handlers; the happy path
@@ -101,7 +101,7 @@ def test_chat_turn_emits_structured_info_log(mock_retrieve, mock_stream, client,
     assert record.top_score == 0.8
 
 
-@patch("app.api.chat.stream_generate", side_effect=_fake_stream)
+@patch("app.services.generation_service.stream_generate", side_effect=_fake_stream)
 @patch("app.api.chat.retrieve", side_effect=_fake_retrieval)
 def test_chat_second_message_in_conversation_succeeds(mock_retrieve, mock_stream, client):
     # Reproduces the DetachedInstanceError bug: the first request commits a new
@@ -125,7 +125,7 @@ def test_chat_second_message_in_conversation_succeeds(mock_retrieve, mock_stream
     assert "event: error" not in body
 
 
-@patch("app.api.chat.stream_generate", side_effect=_fake_stream)
+@patch("app.services.generation_service.stream_generate", side_effect=_fake_stream)
 @patch("app.api.chat.retrieve", side_effect=RuntimeError("vector store unavailable"))
 def test_chat_emits_error_event_on_retrieval_failure(mock_retrieve, mock_stream, client):
     # Previously, retrieve() and build_contents() ran outside the try/except
@@ -139,7 +139,7 @@ def test_chat_emits_error_event_on_retrieval_failure(mock_retrieve, mock_stream,
     assert "event: done" in response.text
 
 
-@patch("app.api.chat.stream_generate", side_effect=_fake_stream)
+@patch("app.services.generation_service.stream_generate", side_effect=_fake_stream)
 @patch("app.api.chat.retrieve", side_effect=_fake_retrieval)
 def test_chat_history_persists_across_requests(mock_retrieve, mock_stream, client):
     client.post("/api/chat", json={"message": "what formats are supported?"})
@@ -152,7 +152,7 @@ def test_chat_history_persists_across_requests(mock_retrieve, mock_stream, clien
     assert history[1]["content"] == "DocMind supports PDF and DOCX."
 
 
-@patch("app.api.chat.stream_generate", side_effect=_fake_stream)
+@patch("app.services.generation_service.stream_generate", side_effect=_fake_stream)
 @patch("app.api.chat.retrieve", side_effect=_fake_retrieval_with_chunks)
 def test_chat_done_event_carries_full_citation_payload(mock_retrieve, mock_stream, client):
     # Grounded citations are the product's headline feature, but every other chat test
@@ -175,7 +175,7 @@ def test_chat_done_event_carries_full_citation_payload(mock_retrieve, mock_strea
     ]
 
 
-@patch("app.api.chat.stream_generate", side_effect=_fake_stream)
+@patch("app.services.generation_service.stream_generate", side_effect=_fake_stream)
 @patch("app.api.chat.retrieve", side_effect=_fake_retrieval_with_chunks)
 def test_chat_history_round_trips_citations_through_json_column(mock_retrieve, mock_stream, client):
     # `ChatMessage.citations` is a JSON *string* column: citations go through
@@ -201,7 +201,7 @@ def test_chat_history_round_trips_citations_through_json_column(mock_retrieve, m
     assert citations[1]["page_number"] is None
 
 
-@patch("app.api.chat.stream_generate", side_effect=_fake_stream)
+@patch("app.services.generation_service.stream_generate", side_effect=_fake_stream)
 @patch("app.api.chat.retrieve", side_effect=_fake_retrieval)
 def test_clear_history_removes_all_messages(mock_retrieve, mock_stream, client):
     client.post("/api/chat", json={"message": "hi"})
@@ -210,3 +210,31 @@ def test_clear_history_removes_all_messages(mock_retrieve, mock_stream, client):
 
     assert response.status_code == 204
     assert client.get("/api/chat/history").json() == []
+
+
+@patch("app.services.ollama_generation_service.stream_generate", side_effect=_fake_stream)
+@patch("app.api.chat.retrieve", side_effect=_fake_retrieval)
+def test_chat_dispatches_to_ollama_when_active_provider_is_ollama(mock_retrieve, mock_stream, client):
+    client.app.state.active_llm_provider = "ollama"
+    try:
+        response = client.post("/api/chat", json={"message": "what formats are supported?"})
+
+        assert response.status_code == 200
+        done_line = [line for line in response.text.splitlines() if line.startswith("data:") and "provider" in line][0]
+        payload = json.loads(done_line[len("data: "):])
+        assert payload["provider"] == "ollama"
+
+        history = client.get("/api/chat/history").json()
+        assert history[-1]["provider"] == "ollama"
+    finally:
+        client.app.state.active_llm_provider = "gemini"
+
+
+@patch("app.services.generation_service.stream_generate", side_effect=_fake_stream)
+@patch("app.api.chat.retrieve", side_effect=_fake_retrieval)
+def test_chat_reports_gemini_provider_by_default(mock_retrieve, mock_stream, client):
+    response = client.post("/api/chat", json={"message": "hi"})
+
+    done_line = [line for line in response.text.splitlines() if line.startswith("data:") and "provider" in line][0]
+    payload = json.loads(done_line[len("data: "):])
+    assert payload["provider"] == "gemini"
