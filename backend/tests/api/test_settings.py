@@ -50,3 +50,20 @@ def test_ollama_reachable_returns_false_on_connection_error():
 
     with patch("httpx.get", side_effect=ConnectionError("refused")):
         assert _ollama_reachable() is False
+
+
+def test_patch_settings_to_gemini_never_probes_ollama(client):
+    with patch("app.api.settings._ollama_reachable") as mock_reachable:
+        response = client.patch("/api/settings", json={"llm_provider": "gemini"})
+
+    assert response.status_code == 200
+    mock_reachable.assert_not_called()
+
+
+def test_patch_settings_to_ollama_probes_exactly_once(client):
+    with patch("app.api.settings._ollama_reachable", return_value=True) as mock_reachable:
+        response = client.patch("/api/settings", json={"llm_provider": "ollama"})
+
+    assert response.status_code == 200
+    mock_reachable.assert_called_once()
+    client.app.state.active_llm_provider = "gemini"
