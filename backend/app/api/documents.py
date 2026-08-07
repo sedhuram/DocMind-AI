@@ -15,7 +15,7 @@ from app.services.vector_store import VectorStore
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
-_ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md", ".docx"}
+_ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md", ".docx", ".csv", ".xlsx"}
 
 
 @router.get("", response_model=list[DocumentOut])
@@ -38,6 +38,14 @@ async def upload_document(
     safe_name = Path(file.filename or "").name
     if not safe_name:
         raise HTTPException(status_code=422, detail="Missing filename")
+
+    # Enforce total document count limit
+    total_docs = db.query(Document).count()
+    if total_docs >= settings.max_total_documents:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Maximum document limit ({settings.max_total_documents}) reached. Delete some files to upload more."
+        )
 
     suffix = Path(safe_name).suffix.lower()
     if suffix not in _ALLOWED_EXTENSIONS:

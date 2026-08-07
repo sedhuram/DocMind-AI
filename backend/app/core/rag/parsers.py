@@ -1,7 +1,9 @@
+import csv
 from dataclasses import dataclass
 from pathlib import Path
 
 import docx
+import openpyxl
 import pypdf
 
 
@@ -16,20 +18,6 @@ class UnsupportedFileTypeError(Exception):
 
 
 def parse_file(file_path: Path) -> list[ParsedPage]:
-    """Extract text from a document, preserving page numbers where the format has them.
-
-    PDF pages map 1:1 to ParsedPage.page_number. DOCX and plain text have no fixed
-    pagination, so they collapse to a single page with page_number=None; citations
-    for those formats fall back to chunk index instead of page number.
-
-    Note: DOCX extraction only reads paragraph text (document.paragraphs); table
-    content (document.tables) is not extracted, so tabular data in a Word doc is
-    silently dropped. Table extraction is out of scope for this task.
-
-    Note: plain text/markdown decoding uses errors="ignore" on UTF-8, which is a
-    deliberate simplification -- non-UTF-8 byte sequences are silently dropped
-    rather than failing the whole ingestion. See _parse_text for details.
-    """
     suffix = file_path.suffix.lower()
     if suffix == ".pdf":
         return _parse_pdf(file_path)
@@ -37,6 +25,10 @@ def parse_file(file_path: Path) -> list[ParsedPage]:
         return _parse_docx(file_path)
     if suffix in (".txt", ".md"):
         return _parse_text(file_path)
+    if suffix == ".csv":
+        return _parse_csv(file_path)
+    if suffix == ".xlsx":
+        return _parse_xlsx(file_path)
     raise UnsupportedFileTypeError(f"Unsupported file type: {suffix}")
 
 
@@ -51,16 +43,39 @@ def _parse_pdf(file_path: Path) -> list[ParsedPage]:
 
 
 def _parse_docx(file_path: Path) -> list[ParsedPage]:
-    # Note: only paragraph text is extracted; document.tables is not read, so
-    # tabular content in the .docx is silently dropped (out of scope here).
     document = docx.Document(str(file_path))
     text = "\n\n".join(p.text for p in document.paragraphs if p.text.strip())
     return [ParsedPage(text=text, page_number=None)] if text.strip() else []
 
 
 def _parse_text(file_path: Path) -> list[ParsedPage]:
-    # errors="ignore" is deliberate: non-UTF-8 byte sequences are silently
-    # dropped rather than raising and failing the whole ingestion. This is an
-    # intentional simplification for this project's scope, not an oversight.
     text = file_path.read_text(encoding="utf-8", errors="ignore")
     return [ParsedPage(text=text, page_number=None)] if text.strip() else []
+
+
+def _parse_csv(file_path: Path) -> list[ParsedPage]:
+    lines = []
+    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+        reader = csv.reader(f)
+        for row in reader:
+            if any(cell.strip() for cell in row):
+                lines.append(" | ".join(cell.strip() for cell in row))
+    text = "\n".join(lines)
+    return [ParsedPage(text=text, page_number=None)] if text.strip() else []
+
+
+def _parse_xlsx(file_path: Path) -> list[ParsedPage]:
+    wb = openpyxl.load_workbook(str(file_path), data_only=True)
+    sheet_blocks = []
+    for sheet_name in wb.sheetnames:
+        sheet = wb[sheet_name]
+        rows = []
+        for row in sheet.iter_rows(values_only=True):
+            if any(cell is not None and str(cell).strip() for cell in row):
+                row_str = " | ".join(str(cell).strip() if cell is not None else "" for cell in row)
+                rows.append(row_str)
+        if rows:
+            sheet_blocks.append(f"--- Sheet: {sheet_name} ---\n" + "\n".join(rows))
+    text = "\n\n".join(sheet_blocks)
+    return [ParsedPage(text=text, page_number=None)] if text.strip() else []
+

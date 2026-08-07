@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Trash2, FileText, FileWarning, CheckCircle2, Loader2, X } from "lucide-react";
 import { apiClient, type DocumentOut } from "@/lib/api-client";
 import { UploadDropzone } from "@/components/documents/UploadDropzone";
+import { DocumentPreviewModal } from "@/components/documents/DocumentPreviewModal";
 
 const STATUS_ICON: Record<DocumentOut["status"], typeof CheckCircle2> = {
   indexed: CheckCircle2,
@@ -16,6 +17,7 @@ export function DocumentsTab() {
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [previewDoc, setPreviewDoc] = useState<DocumentOut | null>(null);
 
   async function refresh() {
     try {
@@ -31,19 +33,33 @@ export function DocumentsTab() {
     refresh();
   }, []);
 
+  // Listen to external refresh request (e.g. from paste-to-file in chat tab)
+  useEffect(() => {
+    const handleRefresh = () => {
+      refresh();
+    };
+    window.addEventListener("refreshDocuments", handleRefresh);
+    return () => window.removeEventListener("refreshDocuments", handleRefresh);
+  }, []);
+
   async function handleFiles(files: File[]) {
     if (isBusy || files.length === 0) return;
     setIsBusy(true);
     setError(null);
     try {
+      if (documents.length + files.length > 10) {
+        throw new Error(`Uploading files would exceed the limit of 10 documents (currently: ${documents.length}/10).`);
+      }
+
       for (const file of files) {
-        try {
-          await apiClient.uploadDocument(file);
-        } catch (err) {
-          setError(err instanceof Error ? err.message : `Failed to upload ${file.name}`);
+        if (file.size > 3 * 1024 * 1024) {
+          throw new Error(`"${file.name}" exceeds the 3MB size limit.`);
         }
+        await apiClient.uploadDocument(file);
       }
       await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
     } finally {
       setIsBusy(false);
     }
@@ -63,89 +79,112 @@ export function DocumentsTab() {
     }
   }
 
-  return (
-    <div className="h-full overflow-y-auto p-6">
-      <div className="mx-auto max-w-4xl">
-        <UploadDropzone onFiles={handleFiles} disabled={isBusy} />
-        {isBusy && <p className="mt-2 text-sm text-[var(--foreground)]/60">Working…</p>}
-        {error && <p className="mt-2 text-sm text-red-500">{error}</p>}
-        {loadError && (
-          <div className="mt-2 flex items-center justify-between gap-2 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-500">
-            <span>{loadError}</span>
-            <button
-              onClick={() => setLoadError(null)}
-              aria-label="Dismiss error"
-              className="shrink-0 text-red-500/70 hover:text-red-500"
-            >
-              <X size={14} />
-            </button>
-          </div>
-        )}
+  const limitReached = documents.length >= 10;
 
+  return (
+    <div className="h-full flex flex-col overflow-hidden p-4">
+      <div className="mb-3 flex items-center justify-between border-b border-[var(--border)]/70 pb-2.5 shrink-0">
+        <div className="flex flex-col">
+          <h2 className="text-xs font-bold text-[var(--foreground)]">Documents</h2>
+          <p className="text-[9px] text-[var(--foreground)]/50 font-medium">Index or manage files (.pdf, .docx, .csv, .xlsx)</p>
+        </div>
+        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${limitReached ? "bg-amber-500/15 text-amber-600" : "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400"}`}>
+          {documents.length} / 10
+        </span>
+      </div>
+
+      <div className="shrink-0 mb-3">
+        <UploadDropzone onFiles={handleFiles} disabled={isBusy} limitReached={limitReached} />
+      </div>
+
+      {isBusy && (
+        <div className="shrink-0 mb-3 flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 shadow-xs animate-pulse">
+          <Loader2 className="animate-spin text-[var(--accent)] shrink-0" size={14} />
+          <div className="flex flex-col">
+            <span className="text-[11px] font-bold leading-tight">Processing document...</span>
+            <span className="text-[9px] text-[var(--foreground)]/50 mt-0.5 leading-tight">Parsing, chunking and embedding</span>
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <div className="shrink-0 mb-3 flex items-center justify-between rounded-lg border border-red-500/30 bg-red-500/10 p-2.5 text-[10px] font-semibold text-red-600 dark:text-red-400">
+          <span>{error}</span>
+          <button onClick={() => setError(null)} className="p-0.5 hover:opacity-75">
+            <X size={12} />
+          </button>
+        </div>
+      )}
+
+      {loadError && (
+        <div className="shrink-0 mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+          {loadError}
+        </div>
+      )}
+
+      <div className="flex-1 overflow-y-auto space-y-2 pr-0.5 scrollbar-thin">
         {documents.length === 0 ? (
-          <div className="mt-8 text-center text-[var(--foreground)]/50">
-            <FileText className="mx-auto mb-2" size={28} />
-            <p>No documents indexed yet. Upload one above, or drop files into <code>backend/data/static/</code> and restart.</p>
+          <div className="h-full flex flex-col items-center justify-center p-4 text-center text-[var(--foreground)]/40">
+            <FileText size={24} className="mb-2 opacity-50" />
+            <p className="text-xs font-semibold">No documents indexed</p>
+            <p className="text-[9px] mt-0.5 text-[var(--foreground)]/40">Upload files above to start context querying.</p>
           </div>
         ) : (
-          <table className="mt-6 w-full text-sm">
-            <thead className="text-left text-[var(--foreground)]/60">
-              <tr className="border-b border-[var(--border)]">
-                <th className="py-2">Filename</th>
-                <th>Source</th>
-                <th>Status</th>
-                <th>Chunks</th>
-                <th>Size</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {documents.map((doc) => {
-                const StatusIcon = STATUS_ICON[doc.status];
-                return (
-                  <tr key={doc.id} className="border-b border-[var(--border)]/50">
-                    <td className="py-2">{doc.filename}</td>
-                    <td>
-                      <span className="rounded-full border border-[var(--border)] px-2 py-0.5 text-xs">
+          documents.map((doc) => {
+            const StatusIcon = STATUS_ICON[doc.status];
+            return (
+              <div
+                key={doc.id}
+                className="relative rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2.5 shadow-xs hover:border-[var(--accent)]/40 hover:bg-[var(--accent)]/5 transition-all duration-150 group cursor-pointer"
+                onClick={() => setPreviewDoc(doc)}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0 pr-3">
+                    <h4 className="text-[11px] font-bold text-[var(--foreground)] truncate group-hover:text-[var(--accent)] transition-colors" title={doc.filename}>
+                      {doc.filename}
+                    </h4>
+                    <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                      <span className="rounded bg-[var(--border)] px-1 py-0.5 text-[8px] font-bold text-[var(--foreground)]/50 uppercase">
                         {doc.source_type}
                       </span>
-                    </td>
-                    <td>
-                      <span
-                        className={`flex items-center gap-1 text-xs ${
-                          doc.status === "failed" ? "text-red-500" : doc.status === "processing" ? "text-amber-500" : "text-emerald-500"
-                        }`}
-                        title={doc.status_detail ?? undefined}
-                      >
-                        <StatusIcon size={12} className={doc.status === "processing" ? "animate-spin" : ""} />
+                      <span className={`inline-flex items-center gap-0.5 text-[8px] font-bold ${
+                        doc.status === "failed" ? "text-red-500" : doc.status === "processing" ? "text-amber-500" : "text-emerald-500"
+                      }`}>
+                        <StatusIcon size={8} className={doc.status === "processing" ? "animate-spin" : ""} />
                         {doc.status}
                       </span>
-                    </td>
-                    <td>{doc.chunk_count}</td>
-                    <td>{(doc.size_bytes / 1024).toFixed(1)} KB</td>
-                    <td>
-                      {doc.source_type === "upload" ? (
-                        <button
-                          onClick={() => handleDelete(doc.id)}
-                          disabled={isBusy}
-                          aria-label="Delete"
-                          className="text-[var(--foreground)]/50 hover:text-red-500 disabled:opacity-40 disabled:hover:text-[var(--foreground)]/50"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      ) : (
-                        <span title="Static documents are managed via data/static/ and re-indexed on restart" className="text-xs text-[var(--foreground)]/30">
-                          locked
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                    </div>
+                    <p className="text-[8px] text-[var(--foreground)]/45 mt-1 font-medium">
+                      {(doc.size_bytes / 1024).toFixed(1)} KB · {doc.chunk_count} chunks
+                    </p>
+                  </div>
+                  <div className="shrink-0 flex items-center justify-center">
+                    {doc.source_type === "upload" ? (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDelete(doc.id);
+                        }}
+                        disabled={isBusy}
+                        aria-label="Delete"
+                        className="text-[var(--foreground)]/45 hover:text-red-500 transition-colors disabled:opacity-40 p-1 rounded hover:bg-[var(--border)]/20 cursor-pointer"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    ) : (
+                      <span title="Static document (locked)" className="text-[9px] text-[var(--foreground)]/30 select-none mr-1.5">
+                        🔒
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })
         )}
       </div>
+
+      {previewDoc && <DocumentPreviewModal document={previewDoc} onClose={() => setPreviewDoc(null)} />}
     </div>
   );
 }
