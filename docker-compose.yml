@@ -26,6 +26,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      # The lifespan hook bootstraps data/static/ with synchronous embedding calls before
+      # /api/health can respond; without a grace period a slow host would exhaust
+      # interval*retries (50s) and be marked unhealthy mid-bootstrap.
+      start_period: 30s
 
   frontend:
     build:

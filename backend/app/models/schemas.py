@@ -43,6 +43,26 @@ class ChatMessageOut(BaseModel):
     created_at: datetime
 
 
+class ChunkOut(BaseModel):
+    document_id: str
+    filename: str
+    chunk_index: int
+    page_number: int | None = None
+    text: str
+
+
+class ObservabilityRow(BaseModel):
+    id: str
+    query: str
+    latency_ms: int | None = None
+    tokens_in: int | None = None
+    tokens_out: int | None = None
+    chunks_retrieved: int | None = None
+    top_score: float | None = None
+    status: str
+    created_at: datetime
+
+
 class HealthOut(BaseModel):
     status: str
     gemini_configured: bool

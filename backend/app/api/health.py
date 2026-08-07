@@ -26,9 +26,11 @@ def health(vector_store: VectorStore = Depends(get_vector_store)) -> HealthOut:
 
 def _check_sqlite() -> bool:
     try:
-        db = SessionLocal()
-        db.execute(text("SELECT 1"))
-        db.close()
+        # `with` guarantees the session is returned to the pool even when `execute`
+        # raises; the previous manual `db.close()` only ran on the success path, so a
+        # failing health check leaked a connection on every poll.
+        with SessionLocal() as db:
+            db.execute(text("SELECT 1"))
         return True
     except Exception:
         return False

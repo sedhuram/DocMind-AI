@@ -1,14 +1,18 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.orm import ChatMessage
+from app.models.schemas import ObservabilityRow
 
 router = APIRouter(prefix="/observability", tags=["observability"])
 
 
-@router.get("/requests")
-def list_requests(limit: int = 50, db: Session = Depends(get_db)) -> list[dict]:
+@router.get("/requests", response_model=list[ObservabilityRow])
+def list_requests(
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+) -> list[dict]:
     assistant_messages = (
         db.query(ChatMessage)
         .filter(ChatMessage.role == "assistant")

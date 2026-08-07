@@ -22,6 +22,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
+# Sent in the SSE `error` frame *and* persisted as the failed turn's content. Persisting a
+# non-empty placeholder matters for two reasons: an empty-text turn replayed into Gemini's
+# `contents` on the next request is rejected with a 400 (so one transient failure would
+# cascade into every later turn), and a reloaded conversation would otherwise render the
+# failed turn as an unexplained blank bubble.
+_ERROR_MESSAGE = "The model is temporarily unavailable. Please try again."
+
 
 @dataclass(frozen=True)
 class HistoryTurn:
@@ -83,7 +90,11 @@ def chat(
         except Exception:
             logger.exception("Chat generation failed")
             status = "error"
-            yield f"event: error\ndata: {json.dumps({'message': 'The model is temporarily unavailable. Please try again.'})}\n\n"
+            # Replace (not append to) whatever partially streamed: a truncated grounded
+            # answer replayed as conversation history is worse than an explicit failure
+            # marker, and this guarantees the persisted content is never empty.
+            full_text = [_ERROR_MESSAGE]
+            yield f"event: error\ndata: {json.dumps({'message': _ERROR_MESSAGE})}\n\n"
 
         latency_ms = int((time.perf_counter() - start) * 1000)
         citations = [
@@ -117,6 +128,20 @@ def chat(
             "latency_ms": latency_ms, "chunks_retrieved": chunks_retrieved,
             "top_score": round(top_score, 4), "status": status,
         }
+        # One structured record per completed turn, emitted through the app's JsonFormatter
+        # (see app/core/logging.py) so the happy path - not just exception handlers -
+        # produces machine-readable operational data.
+        logger.info(
+            "chat_turn_completed",
+            extra={
+                "latency_ms": latency_ms,
+                "tokens_in": usage.tokens_in,
+                "tokens_out": usage.tokens_out,
+                "chunks_retrieved": chunks_retrieved,
+                "top_score": round(top_score, 4),
+                "status": status,
+            },
+        )
         yield f"event: done\ndata: {json.dumps(done_payload)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

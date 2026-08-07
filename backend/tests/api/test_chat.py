@@ -2,10 +2,36 @@ import json
 from unittest.mock import patch
 
 from app.core.rag.retrieval import RetrievalResult
+from app.services.vector_store import RetrievedChunk
 
 
 def _fake_retrieval(*args, **kwargs):
     return RetrievalResult(chunks=[], context_text="[Source 1: a.txt]\nDocMind supports PDF and DOCX.", top_score=0.8, is_low_confidence=False)
+
+
+def _fake_retrieval_with_chunks(*args, **kwargs):
+    chunks = [
+        RetrievedChunk(
+            document_id="doc-1", filename="handbook.pdf", chunk_index=3,
+            page_number=5, text="DocMind supports PDF and DOCX.", score=0.8123456,
+        ),
+        RetrievedChunk(
+            document_id="doc-2", filename="notes.txt", chunk_index=0,
+            page_number=None, text="Plain text files have no page numbers.", score=0.4211111,
+        ),
+    ]
+    return RetrievalResult(
+        chunks=chunks,
+        context_text="[Source 1: handbook.pdf]\nDocMind supports PDF and DOCX.",
+        top_score=0.8123456,
+        is_low_confidence=False,
+    )
+
+
+def _done_payload(sse_body: str) -> dict:
+    frames = [f for f in sse_body.split("\n\n") if "event: done" in f]
+    data_line = [line for line in frames[0].splitlines() if line.startswith("data: ")][0]
+    return json.loads(data_line[len("data: "):])
 
 
 def _fake_stream(system_instruction, contents, usage):
@@ -38,6 +64,41 @@ def test_chat_emits_error_event_on_generation_failure(mock_retrieve, mock_stream
 
     assert response.status_code == 200
     assert "event: error" in response.text
+
+
+@patch("app.api.chat.stream_generate", side_effect=RuntimeError("upstream down"))
+@patch("app.api.chat.retrieve", side_effect=_fake_retrieval)
+def test_failed_turn_persists_non_empty_content(mock_retrieve, mock_stream, client):
+    # A failed turn used to be saved with content="". That empty turn is replayed into
+    # Gemini's `contents` on the next request (which rejects empty text parts with a 400,
+    # cascading one transient failure into all later turns) and renders as a blank bubble
+    # after a page reload.
+    client.post("/api/chat", json={"message": "hello"})
+
+    history = client.get("/api/chat/history").json()
+
+    assert history[1]["role"] == "assistant"
+    assert history[1]["status"] == "error"
+    assert history[1]["content"].strip() != ""
+
+
+@patch("app.api.chat.stream_generate", side_effect=_fake_stream)
+@patch("app.api.chat.retrieve", side_effect=_fake_retrieval)
+def test_chat_turn_emits_structured_info_log(mock_retrieve, mock_stream, client, caplog):
+    # The JsonFormatter previously only ever ran from exception handlers; the happy path
+    # logged nothing at all.
+    with caplog.at_level("INFO", logger="app.api.chat"):
+        client.post("/api/chat", json={"message": "hi"})
+
+    records = [r for r in caplog.records if r.getMessage() == "chat_turn_completed"]
+    assert len(records) == 1
+    record = records[0]
+    assert record.tokens_in == 10
+    assert record.tokens_out == 3
+    assert record.chunks_retrieved == 0
+    assert record.status == "ok"
+    assert isinstance(record.latency_ms, int)
+    assert record.top_score == 0.8
 
 
 @patch("app.api.chat.stream_generate", side_effect=_fake_stream)
@@ -89,6 +150,55 @@ def test_chat_history_persists_across_requests(mock_retrieve, mock_stream, clien
     assert history[0]["role"] == "user"
     assert history[1]["role"] == "assistant"
     assert history[1]["content"] == "DocMind supports PDF and DOCX."
+
+
+@patch("app.api.chat.stream_generate", side_effect=_fake_stream)
+@patch("app.api.chat.retrieve", side_effect=_fake_retrieval_with_chunks)
+def test_chat_done_event_carries_full_citation_payload(mock_retrieve, mock_stream, client):
+    # Grounded citations are the product's headline feature, but every other chat test
+    # retrieves zero chunks - so the citation dict construction was never exercised.
+    response = client.post("/api/chat", json={"message": "what formats are supported?"})
+
+    assert response.status_code == 200
+    payload = _done_payload(response.text)
+
+    assert payload["chunks_retrieved"] == 2
+    assert payload["citations"] == [
+        {
+            "document_id": "doc-1", "filename": "handbook.pdf",
+            "chunk_index": 3, "page_number": 5, "score": 0.8123,
+        },
+        {
+            "document_id": "doc-2", "filename": "notes.txt",
+            "chunk_index": 0, "page_number": None, "score": 0.4211,
+        },
+    ]
+
+
+@patch("app.api.chat.stream_generate", side_effect=_fake_stream)
+@patch("app.api.chat.retrieve", side_effect=_fake_retrieval_with_chunks)
+def test_chat_history_round_trips_citations_through_json_column(mock_retrieve, mock_stream, client):
+    # `ChatMessage.citations` is a JSON *string* column: citations go through
+    # json.dumps on write and json.loads in `_to_schema` on read, then through
+    # Pydantic's `list[Citation]` validation. This asserts the whole round-trip,
+    # including that an absent page_number survives as null rather than being
+    # coerced to 0 or dropped.
+    client.post("/api/chat", json={"message": "what formats are supported?"})
+
+    history = client.get("/api/chat/history").json()
+
+    assert len(history) == 2
+    citations = history[1]["citations"]
+    assert len(citations) == 2
+    assert citations[0] == {
+        "document_id": "doc-1", "filename": "handbook.pdf",
+        "chunk_index": 3, "page_number": 5, "score": 0.8123,
+    }
+    assert citations[1] == {
+        "document_id": "doc-2", "filename": "notes.txt",
+        "chunk_index": 0, "page_number": None, "score": 0.4211,
+    }
+    assert citations[1]["page_number"] is None
 
 
 @patch("app.api.chat.stream_generate", side_effect=_fake_stream)
