@@ -28,6 +28,11 @@ def test_stream_generate_yields_text_deltas_and_captures_usage(mock_start_stream
     assert deltas == ["Hello ", "world"]
     assert usage.tokens_in == 42
     assert usage.tokens_out == 2
+    # Every other test here mocks _start_stream without checking what it received, so
+    # nothing proved stream_generate actually runs the provider-neutral contents through
+    # _to_gemini_contents - dropping that call would have gone unnoticed until a real
+    # request 400'd on the wrong `contents` shape.
+    mock_start_stream.assert_called_once_with("system", [{"role": "user", "parts": [{"text": "hi"}]}])
 
 
 @patch("app.services.generation_service._start_stream")
