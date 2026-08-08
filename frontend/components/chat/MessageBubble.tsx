@@ -129,7 +129,7 @@ export function MessageBubble({ message, onOpenCitation, isStreaming }: MessageB
           </div>
         ) : (
           <div
-            className={`prose prose-sm max-w-none dark:prose-invert ${
+            className={`prose prose-sm max-w-none ${isUser ? "prose-invert" : "dark:prose-invert"} ${
               isError ? "text-[var(--foreground)]/60 italic" : ""
             }`}
           >
